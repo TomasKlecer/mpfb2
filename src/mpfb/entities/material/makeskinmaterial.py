@@ -10,19 +10,21 @@ from mpfb.services.materialservice import MaterialService
 _LOG = LogService.get_logger("material.makeskinmaterial")
 
 _TEXTURE_NAMES = [
+    "aomap",
     "bumpmap",
     "diffuse",
     "displacementmap",
+    "emcmap",
+    "emsmap",
     "metallicmap",
     "normalmap",
+    "opacitymap",
     "roughnessmap",
-    "transmissionmap",
-    "aomap",
-    "emissioncolormap",
-    "emissionstrengthmap",
-    "subsurfacecolormap",
-    "subsurfacestrengthmap",
-    "specularmap"]
+    "specularmap",
+    "subcmap",
+    "subsmap",
+    "transmissionmap"
+    ]
 
 _NODE_SOCKET_VALUES = [] # key name, node name, socket name
 _NODE_SOCKET_VALUES.append(["diffuseColor", "Principled BSDF", "Base Color"]) # First pick up color from principled
@@ -60,21 +62,22 @@ class MakeSkinMaterial(MhMaterial):
 
         if template_values is None:
             template_values = dict()
+            self._template(template_values, "has_aomap", "aomap_filename", "aomapTexture")
             self._template(template_values, "has_bumpmap", "bumpmap_filename", "bumpMapTexture")
             self._template(template_values, "has_diffuse", "diffuse_filename", "diffuseTexture")
             self._template(template_values, "has_displacementmap", "displacementmap_filename", "displacementMapTexture")
+            self._template(template_values, "has_emcmap", "emcmap_filename", "emissionColorMapTexture")
+            self._template(template_values, "has_emsmap", "emsmap_filename", "emissionStrengthMapTexture")
             self._template(template_values, "has_metallicmap", "metallicmap_filename", "metallicMapTexture")
             self._template(template_values, "has_normalmap", "normalmap_filename", "normalMapTexture")
-            self._template(template_values, "has_roughnessmap", "roughnessmap_filename", "roughnessMapTexture")
-            self._template(template_values, "has_transmissionmap", "transmissionmap_filename", "transmissionMapTexture")
             self._template(template_values, "has_opacitymap", "opacitymap_filename", "opacityMapTexture")
-            self._template(template_values, "has_ao", "ao_filename", "aomapTexture")
-            self._template(template_values, "has_emc", "emc_filename", "emissionColorMapTexture")
-            self._template(template_values, "has_ems", "ems_filename", "emissionStrengthMapTexture")
-            self._template(template_values, "has_subc", "subc_filename", "subsurfaceColorMapTexture")
-            self._template(template_values, "has_subs", "subs_filename", "subsurfaceStrengthMapTexture")
+            self._template(template_values, "has_roughnessmap", "roughnessmap_filename", "roughnessMapTexture")
             self._template(template_values, "has_specularmap", "specularmap_filename", "specularMapTexture")
-
+            self._template(template_values, "has_subcmap", "subcmap_filename", "subsurfaceColorMapTexture")
+            self._template(template_values, "has_subsmap", "subsmap_filename", "subsurfaceStrengthMapTexture")
+            self._template(template_values, "has_transmissionmap", "transmissionmap_filename", "transmissionMapTexture")
+            
+            
         template_values["bump_or_normal"] = "false"
         if template_values["has_bumpmap"] == "true":
             template_values["bump_or_normal"] = "true"

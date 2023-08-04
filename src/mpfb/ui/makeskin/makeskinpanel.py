@@ -23,17 +23,25 @@ class MPFB_PT_MakeSkin_Panel(Abstract_Panel):
     bl_parent_id = "MPFB_PT_Create_Panel"
 
     def _create_material(self, scene, layout):
-        box = self._create_box(layout, "Create material", "TOOL_SETTINGS")
+        box = self._create_box(layout, "Create empty material", "TOOL_SETTINGS")
         props = [
-            "overwrite",
+            #"overwrite",
             #"create_node_visualization"
             "create_diffuse",
             "create_normalmap",
             "create_bumpmap",
-            "create_transmissionmap",
-            "create_roughnessmap",
+            "create_aomap",
+            "create_displacementmap",
+            "create_emcmap",
+            "create_emsmap",
             "create_metallicmap",
-            "create_displacementmap"
+            "create_opacitymap",
+            "create_roughnessmap",
+            "create_specularmap",
+            "create_subcmap",
+            "create_subsmap",
+            "create_transmissionmap",
+            "resolution"
             ]
         MAKESKIN_PROPERTIES.draw_properties(scene, box, props)
         box.operator('mpfb.create_makeskin_material')
