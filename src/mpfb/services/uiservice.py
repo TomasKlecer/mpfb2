@@ -75,6 +75,7 @@ class _UiService():
             self.set_value("OPERATIONSCATEGORY", ui_prefix + " Operations")
             self.set_value("DEVELOPERCATEGORY", ui_prefix + " Developer")
             self.set_value("HAIREDITORCATEGORY", ui_prefix + " Hair editor")
+            self.set_value("MOCAPCATEGORY", ui_prefix + " Motion Capture")
         else:
             for category in [
                 "MODELCATEGORY",
@@ -85,7 +86,8 @@ class _UiService():
                 "RIGCATEGORY",
                 "OPERATIONSCATEGORY",
                 "DEVELOPERCATEGORY",
-                "HAIREDITORCATEGORY"]:
+                "HAIREDITORCATEGORY",
+                "MOCAPCATEGORY"]:
                 self.set_value(category, ui_prefix)
 
     def get_value(self, name: str) -> Any:

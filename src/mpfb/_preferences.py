@@ -69,6 +69,26 @@ class MpfbPreferences(bpy.types.AddonPreferences):
         default=""
     )
 
+    mocap_env_dir: bpy.props.StringProperty(
+        name="Motion capture environment folder",
+        description="Folder for Motion capture Python environment (Python, packages and their download cache, several GB). Leave empty to use the folder mocap_env in the MPFB user folder",
+        default="",
+        subtype='DIR_PATH'
+    )
+
+    mocap_use_own_uv: bpy.props.BoolProperty(
+        name="Use own uv binary",
+        description="Use an existing uv binary to build the motion capture environment, instead of installing uv through blender's pip",
+        default=False
+    )
+
+    mocap_uv_binary: bpy.props.StringProperty(
+        name="uv binary",
+        description="Path to the uv executable (uv.exe on Windows)",
+        default="",
+        subtype='FILE_PATH'
+    )
+
     def draw(self, context):
         layout = self.layout
         # This setting takes effect immediately, so it is drawn above the warning about restarting
@@ -82,3 +102,7 @@ class MpfbPreferences(bpy.types.AddonPreferences):
         layout.prop(self, 'mpfb_shelf_label')
         layout.prop(self, 'mh_user_data')
         layout.prop(self, 'mh_auto_user_data')
+        layout.prop(self, 'mocap_env_dir')
+        layout.prop(self, 'mocap_use_own_uv')
+        if self.mocap_use_own_uv:
+            layout.prop(self, 'mocap_uv_binary')

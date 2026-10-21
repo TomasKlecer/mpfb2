@@ -258,6 +258,12 @@ def unregister():
 
     global _LOG  # pylint: disable=W0603,W0602
 
+    try:
+        from .services.mocapenvservice import MocapEnvService
+        MocapEnvService.cancel_install()
+    except Exception as err:  # pylint: disable=W0718
+        _LOG.error("Could not cancel the motion capture environment install", err)
+
     _LOG.debug("About to unregister classes")
     global ClassManager  # pylint: disable=W0603,W0602
     ClassManager.unregister_classes()
