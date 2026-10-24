@@ -19,5 +19,8 @@ __all__ = [
     "MPFB_PT_Mocap_Panel",
     "MPFB_OT_Mocap_Install_Env_Operator",
     "MPFB_OT_Mocap_Cancel_Install_Operator",
-    "MPFB_OT_Mocap_Open_Env_Dir_Operator"
+    "MPFB_OT_Mocap_Open_Env_Dir_Operator",
+    "MPFB_OT_Mocap_Run_Operator",
+    "MPFB_OT_Mocap_Cancel_Run_Operator",
+    "MPFB_OT_Mocap_Open_Output_Operator"
 ]

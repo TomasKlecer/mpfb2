@@ -1,0 +1,8 @@
+{
+    "type": "float",
+    "name": "video_start",
+    "label": "Start",
+    "default": 0.0,
+    "min": 0.0,
+    "description": "Second of the video from which it is processed"
+}

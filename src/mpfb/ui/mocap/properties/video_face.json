@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "video_face",
+    "label": "Face",
+    "default": true,
+    "description": "Run the face landmarker (478 landmarks and 52 ARKit blendshapes)"
+}

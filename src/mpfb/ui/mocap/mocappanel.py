@@ -13,12 +13,18 @@ from ... import ClassManager
 from ...services.logservice import LogService
 from ...services.uiservice import UiService
 from ...services.mocapenvservice import MocapEnvService, InstallJob
+from ...services.mocaprunservice import MocapRunService, RunJob, TaskState
 from ...ui.abstractpanel import Abstract_Panel
+from .mocapproperties import MOCAP_PROPERTIES
 
 _LOG = LogService.get_logger("ui.mocappanel")
 
 # keeps long log lines from unnecesary copying (labels are clipped by panel width anyway)
 _MAX_LINE_LENGTH = 120
+
+
+_TASK_ICONS = {TaskState.PENDING: "DOT", TaskState.RUNNING: "PLAY", TaskState.DONE: "CHECKMARK",
+               TaskState.FAILED: "ERROR"}
 
 
 def _format_seconds(seconds: float) -> str:
@@ -52,7 +58,7 @@ class MPFB_PT_Mocap_Panel(Abstract_Panel):
         row.operator("mpfb.mocap_cancel_install", icon="CANCEL")
         row.operator("mpfb.mocap_open_env_dir", text="Open log folder", icon="FILE_FOLDER")
 
-    def _draw_ready(self, layout, env_dir):
+    def _draw_ready(self, layout, env_dir, scene):
         box = self.create_box(layout, "Environment")
         box.label(text="Motion capture environment is ready", icon="CHECKMARK")
         marker = MocapEnvService.read_marker(env_dir) or {}
@@ -66,10 +72,77 @@ class MPFB_PT_Mocap_Panel(Abstract_Panel):
 
         self._draw_missing_models(layout)
 
-        placeholder = self.create_box(layout, "Motion capture")
-        _multiline(placeholder, [
-            "Video and audio inputs will come here.",
-            "Work in progress."])
+        run_job = MocapRunService.get_job()
+        self._draw_inputs(layout, scene, enabled=not run_job.is_running)
+        if run_job.is_running:
+            self._draw_run_progress(layout, run_job)
+        else:
+            row = layout.row()
+            row.scale_y = 1.5
+            row.operator("mpfb.mocap_run", icon="PLAY")
+            self._draw_run_results(layout, run_job)
+
+    def _draw_inputs(self, layout, scene, enabled):
+        box = self.create_box(layout, "Video / image")
+        box.enabled = enabled
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["video_path"], text="")
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["video_pose", "video_hands", "video_face"], toggle=True)
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["pose_model", "min_confidence"])
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["video_start", "video_end"])
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["annotate"])
+
+        box = self.create_box(layout, "Audio")
+        box.enabled = enabled
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["audio_path"], text="")
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["audio_start", "audio_end"])
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["audio_device"])
+
+    def _draw_run_progress(self, layout, job):
+        box = self.create_box(layout, "Running motion capture")
+        box.label(text="Elapsed: " + _format_seconds(job.elapsed_seconds), icon="TIME")
+        for task in job.tasks.values():
+            if task.status == TaskState.RUNNING:
+                if task.total:
+                    detail = "%s %d/%d" % (task.stage, task.current, task.total)
+                else:
+                    detail = task.stage or "starting"
+                box.label(text="%s: %s" % (task.label, detail), icon="PLAY")
+            else:
+                box.label(text="%s: %s" % (task.label, task.status.lower()), icon=_TASK_ICONS.get(task.status, "DOT"))
+        if job.last_line:
+            box.label(text=job.last_line[:_MAX_LINE_LENGTH])
+        row = box.row()
+        row.operator("mpfb.mocap_cancel_run", icon="CANCEL")
+        row.operator("mpfb.mocap_open_output", text="Open output folder", icon="FILE_FOLDER")
+
+    def _draw_run_results(self, layout, job):
+        if job.status == RunJob.IDLE:
+            return
+        titles = {RunJob.SUCCEEDED: "Last run finished", RunJob.FAILED: "Last run failed",
+                  RunJob.CANCELLED: "Last run was cancelled"}
+        box = self.create_box(layout, titles.get(job.status, "Last run"))
+        box.label(text="Took " + _format_seconds(job.elapsed_seconds))
+        for task in job.tasks.values():
+            box.label(text="%s: %s" % (task.label, task.status.lower()), icon=_TASK_ICONS.get(task.status, "DOT"))
+            if task.message:
+                box.label(text=task.message[:_MAX_LINE_LENGTH])
+        if job.status == RunJob.FAILED and not job.failed_tasks and job.error:
+            box.label(text=job.error[:_MAX_LINE_LENGTH], icon="ERROR")
+        if job.loaded_texts:
+            box.label(text="Summaries are in the Text Editor:", icon="TEXT")
+            for name in job.loaded_texts:
+                box.label(text="  " + name)
+        if job.loaded_images:
+            box.label(text="Plots are in the Image Editor:", icon="IMAGE_DATA")
+            for name in job.loaded_images:
+                box.label(text="  " + name)
+        videos = [output for output in job.outputs if output["kind"] == "video"]
+        if videos:
+            box.label(text="Annotated video is in the output folder.", icon="FILE_MOVIE")
+        box.operator("mpfb.mocap_open_output", text="Open output folder", icon="FILE_FOLDER")
 
     def _draw_missing_models(self, layout):
         missing = MocapEnvService.get_missing_models()
@@ -135,7 +208,7 @@ class MPFB_PT_Mocap_Panel(Abstract_Panel):
 
         env_dir = MocapEnvService.get_env_dir()
         if MocapEnvService.is_env_installed(env_dir):
-            self._draw_ready(layout, env_dir)
+            self._draw_ready(layout, env_dir, context.scene)
         else:
             self._draw_setup(layout, job, env_dir)
 

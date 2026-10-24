@@ -1,0 +1,7 @@
+{
+    "type": "path",
+    "name": "audio_path",
+    "label": "Audio",
+    "default": "",
+    "description": "Audio recording (or a audio track from video) for the phoneme recognizer"
+}

@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "video_pose",
+    "label": "Pose",
+    "default": true,
+    "description": "Run the pose landmarker (33 body landmarks)"
+}

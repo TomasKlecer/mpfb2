@@ -14,9 +14,14 @@ _LOG.trace("initializing motion capture operators")
 
 from .install_env_operator import (MPFB_OT_Mocap_Install_Env_Operator, MPFB_OT_Mocap_Cancel_Install_Operator,
                                    MPFB_OT_Mocap_Open_Env_Dir_Operator)
+from .run_mocap_operator import (MPFB_OT_Mocap_Run_Operator, MPFB_OT_Mocap_Cancel_Run_Operator,
+                                 MPFB_OT_Mocap_Open_Output_Operator)
 
 __all__ = [
     "MPFB_OT_Mocap_Install_Env_Operator",
     "MPFB_OT_Mocap_Cancel_Install_Operator",
-    "MPFB_OT_Mocap_Open_Env_Dir_Operator"
+    "MPFB_OT_Mocap_Open_Env_Dir_Operator",
+    "MPFB_OT_Mocap_Run_Operator",
+    "MPFB_OT_Mocap_Cancel_Run_Operator",
+    "MPFB_OT_Mocap_Open_Output_Operator"
 ]

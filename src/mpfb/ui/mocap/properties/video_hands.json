@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "video_hands",
+    "label": "Hands",
+    "default": true,
+    "description": "Run the hand landmarker (21 landmarks per hand)"
+}

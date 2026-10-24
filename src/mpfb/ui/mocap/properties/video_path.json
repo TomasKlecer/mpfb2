@@ -1,0 +1,7 @@
+{
+    "type": "path",
+    "name": "video_path",
+    "label": "Video / image",
+    "default": "",
+    "description": "Video or image of a person. Its body, hands and face are run through the mediapipe landmarkers"
+}

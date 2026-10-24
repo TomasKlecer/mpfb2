@@ -261,6 +261,8 @@ def unregister():
     try:
         from .services.mocapenvservice import MocapEnvService
         MocapEnvService.cancel_install()
+        from .services.mocaprunservice import MocapRunService
+        MocapRunService.cancel_run()
     except Exception as err:  # pylint: disable=W0718
         _LOG.error("Could not cancel the motion capture environment install", err)
 

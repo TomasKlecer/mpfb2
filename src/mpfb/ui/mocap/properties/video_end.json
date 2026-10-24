@@ -1,0 +1,8 @@
+{
+    "type": "float",
+    "name": "video_end",
+    "label": "End",
+    "default": 0.0,
+    "min": 0.0,
+    "description": "Second of the video up to which it is processed. 0 means until the end of the video"
+}

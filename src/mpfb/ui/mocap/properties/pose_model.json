@@ -1,0 +1,27 @@
+{
+    "type": "enum",
+    "name": "pose_model",
+    "label": "Pose model",
+    "default": "FULL",
+    "description": "Size of the pose landmarker model. Bigger is more accurate and slower",
+    "items": [
+        [
+            "LITE",
+            "Lite",
+            "Fastest, least accurate",
+            0
+        ],
+        [
+            "FULL",
+            "Full",
+            "Balanced",
+            1
+        ],
+        [
+            "HEAVY",
+            "Heavy",
+            "Slowest, most accurate",
+            2
+        ]
+    ]
+}

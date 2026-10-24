@@ -1,0 +1,21 @@
+{
+    "type": "enum",
+    "name": "audio_device",
+    "label": "Device",
+    "default": "AUTO",
+    "description": "Where the phoneme recognizer runs",
+    "items": [
+        [
+            "AUTO",
+            "Auto",
+            "GPU (CUDA) when available, CPU otherwise",
+            0
+        ],
+        [
+            "CPU",
+            "CPU",
+            "Always on the CPU",
+            1
+        ]
+    ]
+}
