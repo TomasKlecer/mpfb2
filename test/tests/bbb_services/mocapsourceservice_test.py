@@ -177,3 +177,55 @@ def test_sources_from_run(tmp_path):
 
 def test_sources_from_run_without_job(tmp_path):
     assert MocapSourceService.sources_from_run(str(tmp_path)) == {"face": None, "bodies": [], "audio": None}
+
+
+ARKIT_FACEUNITS = dynamic_import("mpfb.services.faceservice", "ARKIT_FACEUNITS")
+_ROTATIONS = ["HeadYaw", "HeadPitch", "HeadRoll", "LeftEyeYaw", "LeftEyePitch", "LeftEyeRoll",
+              "RightEyeYaw", "RightEyePitch", "RightEyeRoll"]
+
+
+def _write_livelink(path, frames=120, empty=False):
+    """A csv as Live Link Face writes it: Timecode, BlendShapeCount, the ARKit names capitalized, head and eye rotation.
+    The timecode starts just before a full second at 60 fps, one row is repeated."""
+    names = [name[0].upper() + name[1:] for name in ARKIT_FACEUNITS]
+    lines = [",".join(["Timecode", "BlendShapeCount"] + names + _ROTATIONS)]
+    for frame in range(frames):
+        total = 57 + frame
+        timecode = "10:20:%02d:%02d.%03d" % (30 + total // 60, total % 60, 125)
+        values = [0.0] * len(names) if empty else [0.5 if name == "JawOpen" else 0.1 for name in names]
+        row = [timecode, str(len(names))] + ["%.4f" % value for value in values] + ["0.01"] * len(_ROTATIONS)
+        lines.append(",".join(row))
+        if frame == 10:
+            lines.append(",".join(row))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_livelink_csv_is_read(tmp_path):
+    times, names, values = MocapSourceService.read_livelink_csv(_write_livelink(tmp_path / "take.csv"))
+    assert len(times) == 120  # the repeated row is dropped
+    assert times[0] == 0.0
+    assert times[1] == pytest.approx(1.0 / 60.0)
+    assert times[-1] == pytest.approx(119.0 / 60.0)
+    assert sorted(names) == sorted(ARKIT_FACEUNITS)
+    assert "tongueOut" in names and "HeadYaw" not in names
+    assert values[0, names.index("jawOpen")] == pytest.approx(0.5)
+
+
+def test_livelink_csv_as_face_source(tmp_path):
+    info = MocapSourceService.inspect(_write_livelink(tmp_path / "take.csv"))
+    assert info["kind"] == _MODULE.KIND_LIVELINK
+    assert abs(info["fps"] - 60.0) < 0.1
+    assert MocapSourceService.describe(info) == "take.csv"
+    assert "Live Link Face" in MocapSourceService.details(info)
+    assert MocapSourceService.check_role(info, ROLE_FACE) == []
+    assert MocapSourceService.check_role(info, ROLE_BODY)[0][0] == ERROR
+    assert MocapSourceService.check_role(info, ROLE_AUDIO)[0][0] == ERROR
+
+
+def test_empty_or_foreign_csv_is_rejected(tmp_path):
+    empty = MocapSourceService.inspect(_write_livelink(tmp_path / "empty.csv", empty=True))
+    assert MocapSourceService.check_role(empty, ROLE_FACE)[0][0] == ERROR
+    foreign = tmp_path / "other.csv"
+    foreign.write_text("a,b\n1,2\n", encoding="utf-8")
+    assert MocapSourceService.check_role(MocapSourceService.inspect(str(foreign)), ROLE_FACE)[0][0] == ERROR

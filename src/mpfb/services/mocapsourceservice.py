@@ -10,10 +10,12 @@
 
     <run folder>/video_<input>_landmarks.npz   vision output: pose, hands, face, blendshapes per frame
     <run folder>/audio_<input>_logits.npz      audio output: phoneme log probabilities per 20 ms
+    <any folder>/<take>.csv                    Live Link Face recording (iPhone TrueDepth): ARKit values per frame
 
 This service looks into the file and checks whether it fits the role it was picked for.
 """
 
+import csv
 import datetime
 import json
 import os
@@ -24,6 +26,7 @@ import numpy as np
 
 from .logservice import LogService
 from .locationservice import LocationService
+from .faceservice import ARKIT_FACEUNITS
 
 _LOG = LogService.get_logger("services.mocapsourceservice")
 
@@ -33,13 +36,19 @@ ROLE_AUDIO = "AUDIO"
 
 KIND_VISION = "vision"
 KIND_AUDIO = "audio"
+KIND_LIVELINK = "livelink"
 KIND_UNKNOWN = "unknown"
 
 ERROR = "ERROR"
 WARNING = "WARNING"
 
 # File browser filters for picking a source of each role
-ROLE_FILTERS = {ROLE_FACE: "*_landmarks.npz", ROLE_BODY: "*_landmarks.npz", ROLE_AUDIO: "*_logits.npz"}
+ROLE_FILTERS = {ROLE_FACE: "*_landmarks.npz;*.csv", ROLE_BODY: "*_landmarks.npz", ROLE_AUDIO: "*_logits.npz"}
+
+# Live Link Face timecode HH:MM:SS:FF.sss (frame and its fraction)
+_TIMECODE = re.compile(r"^(\d+):(\d+):(\d+)[:;](\d+)(?:\.(\d+))?$")
+_TIMECODE_RATES = (24, 25, 30, 48, 50, 60)
+_DEFAULT_LIVELINK_FPS = 60
 
 # Below this share of frames with a detection, a source is flagged as weak
 _LOW_DETECTION = 0.5
@@ -103,6 +112,54 @@ class MocapSourceService():
                 sources["audio"] = output(task["id"], "_logits.npz")
         return sources
 
+    # ------------ Live Link Face --------------
+
+    @staticmethod
+    def read_livelink_csv(path: str) -> tuple[np.ndarray, list[str], np.ndarray]:
+        """Times in seconds from the first frame, ARKit names used by MPFB2 and their values per frame.
+        Columns, which are not ARKit face units (BlendShapeCount, head and eye rotation), are skipped."""
+        with open(path, "r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.reader(csv_file))
+        header = [column.strip() for column in rows[0]] if rows else []
+        known = {name.lower(): name for name in ARKIT_FACEUNITS}
+        columns = [(index, known[column.lower()]) for index, column in enumerate(header) if column.lower() in known]
+        if not header or header[0].lower() != "timecode" or not columns:
+            raise ValueError("Not a Live Link Face csv")
+
+        timecodes = []
+        values = []
+        for row in rows[1:]:
+            if len(row) < len(header):
+                continue
+            timecodes.append(_TIMECODE.match(row[0].strip()))
+            values.append([MocapSourceService._number(row[index]) for index, _name in columns])
+        if not values:
+            raise ValueError("The csv has no frames")
+
+        if all(timecodes):
+            parts = [match.groups() for match in timecodes]
+            highest = max(int(part[3]) for part in parts)
+            rate = next((rate for rate in _TIMECODE_RATES if rate > highest), _DEFAULT_LIVELINK_FPS)
+            times = np.array([int(h) * 3600 + int(m) * 60 + int(sec) + (int(frame) + (int(fraction) / 10 ** len(fraction) if fraction else 0.0)) / rate
+                              for h, m, sec, frame, fraction in parts])
+        else:
+            times = np.arange(len(values)) / _DEFAULT_LIVELINK_FPS
+        times = times - times[0]
+
+        # Repeated or out of order timecodes are dropped
+        keep = [0]
+        for index in range(1, len(times)):
+            if times[index] > times[keep[-1]]:
+                keep.append(index)
+        return times[keep], [name for _index, name in columns], np.asarray(values, dtype=np.float64)[keep]
+
+    @staticmethod
+    def _number(text: str) -> float:
+        try:
+            return float(text)
+        except ValueError:
+            return float("nan")
+
     # ----------- Inspecting -------------
 
     @staticmethod
@@ -124,6 +181,9 @@ class MocapSourceService():
         info: dict[str, Any] = {"path": path, "exists": True, "kind": KIND_UNKNOWN, "error": None,
                                 "frames": 0, "duration": 0.0, "fps": 0.0, "detection": {}, "speech": None,
                                 "input_name": None, "run_label": MocapSourceService._run_label(path)}
+        if path.lower().endswith(".csv"):
+            MocapSourceService._read_livelink(info, path)
+            return info
         task = MocapSourceService._job_task(path)
         if task is not None:
             # job.json may come from another system, so split on both kinds of separators
@@ -165,6 +225,23 @@ class MocapSourceService():
         if enabled("face"):
             detection["face"] = float(np.mean(~np.isnan(data["blendshapes"][:, 0]))) if frames else 0.0
         info["detection"] = detection
+
+    @staticmethod
+    def _read_livelink(info: dict, path: str) -> None:
+        info["input_name"] = os.path.basename(path)
+        try:
+            times, _names, values = MocapSourceService.read_livelink_csv(path)
+        except Exception as err:  # pylint: disable=W0718
+            info["error"] = "Could not read the Live Link Face csv: %s" % err
+            return
+        info["kind"] = KIND_LIVELINK
+        info["frames"] = len(times)
+        if len(times) > 1:
+            info["fps"] = (len(times) - 1) / times[-1]
+            info["duration"] = len(times) / info["fps"]
+        # LLF writes zeros while it does not track the face
+        info["detection"] = {"face": float(np.mean(np.nan_to_num(values).any(axis=1)))}
+        info["start"] = 0.0
 
     @staticmethod
     def _read_audio(info: dict, data: Any) -> None:
@@ -226,6 +303,8 @@ class MocapSourceService():
             else:
                 parts.append("%d frames · %.1f s · %.0f fps" % (info["frames"], info["duration"], info["fps"]))
             parts += ["%s %d %%" % (name, round(rate * 100)) for name, rate in info["detection"].items()]
+        elif info["kind"] == KIND_LIVELINK:
+            parts.append("%d frames · %.1f s · %.0f fps · Live Link Face" % (info["frames"], info["duration"], info["fps"]))
         elif info["kind"] == KIND_AUDIO:
             parts.append("%.1f s" % info["duration"])
             parts.append("speech %d %%" % round((info["speech"] or 0.0) * 100))
@@ -247,7 +326,15 @@ class MocapSourceService():
                 return [(WARNING, "Almost no speech was recognised")]
             return []
 
+        if info["kind"] == KIND_LIVELINK:
+            if role != ROLE_FACE:
+                return [(ERROR, "Live Link Face csv has only the face")]
+            if info["detection"]["face"] == 0.0:
+                return [(ERROR, "The csv has no tracked face, all frames are empty")]
+            return []
         if info["kind"] != KIND_VISION:
+            if role == ROLE_FACE:
+                return [(ERROR, "Not a face output, pick a *_landmarks.npz or a Live Link Face csv")]
             return [(ERROR, "Not a video / image output, pick a *_landmarks.npz")]
         model = "face" if role == ROLE_FACE else "pose"
         rate = info["detection"].get(model)
@@ -264,7 +351,8 @@ class MocapSourceService():
         """Problems between the sources (different frame rates or lengths)."""
         problems = []
         videos = [info for info in ([face] if face else []) + bodies
-                  if info.get("exists") and not info.get("error") and info.get("kind") == KIND_VISION and info["frames"] > 1]
+                  if info.get("exists") and not info.get("error") and info.get("kind") in (KIND_VISION, KIND_LIVELINK)
+                  and info["frames"] > 1]
         rates = sorted({round(info["fps"], 1) for info in videos})
         if len(rates) > 1 and rates[-1] - rates[0] > _FPS_TOLERANCE:
             problems.append((WARNING, "Videos have different fps (%s), they will be resampled"

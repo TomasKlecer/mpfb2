@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_use_neutral",
+    "label": "Subtract neutral face",
+    "default": false,
+    "description": "Subtract the face of the actor at the given time from the whole animation, so a resting face gives a neutral expression"
+}

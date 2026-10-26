@@ -12,9 +12,11 @@ import bpy
 from ... import ClassManager
 from ...services.logservice import LogService
 from ...services.uiservice import UiService
-from ...services.mocapsourceservice import MocapSourceService, ROLE_FACE, ROLE_BODY, ROLE_AUDIO, ERROR
+from ...services.mocapsourceservice import MocapSourceService, ROLE_FACE, ROLE_BODY, ROLE_AUDIO, ERROR, KIND_LIVELINK
 from ...ui.abstractpanel import Abstract_Panel
 from .mocappanel import multiline
+from .mocapproperties import MOCAP_PROPERTIES
+from .operators.face_animation_operator import find_basemesh
 from .sourceproperties import FACE_SOURCE, AUDIO_SOURCE, BODY_SOURCES, BODY_INDEX, absolute, main_body_index
 
 _LOG = LogService.get_logger("ui.animationpanel")
@@ -108,6 +110,30 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
             box.label(text="Add one or more *_landmarks.npz with +")
         return infos
 
+    def _face_animation(self, layout, scene, context, face):
+        """Settings of the ARKit face animation and the button to create it."""
+        box = self.create_box(layout, "Face animation")
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["face_smoothing", "face_gain"], slider=True)
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["face_use_neutral"])
+        neutral = row.row(align=True)
+        neutral.enabled = bool(MOCAP_PROPERTIES.get_value("face_use_neutral", False, entity_reference=scene))
+        MOCAP_PROPERTIES.draw_properties(scene, neutral, ["face_neutral_time"])
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["face_mirror", "face_include_children", "face_extend_scene"])
+        if face is not None and face.get("kind") == KIND_LIVELINK and MOCAP_PROPERTIES.get_value("face_mirror", False, entity_reference=scene):
+            box.label(text="Live Link Face already uses the actor's left/right.", icon="INFO")
+
+        basemesh = find_basemesh(context)
+        if basemesh is None:
+            box.label(text="Select an MPFB2 character.", icon="INFO")
+        elif face is None:
+            box.label(text="Pick a face source above.", icon="INFO")
+        else:
+            box.label(text="Starts at frame %d on %s" % (scene.frame_current, basemesh.name))
+        row = box.row()
+        row.scale_y = 1.5
+        row.operator("mpfb.mocap_create_face_animation", icon="SHAPEKEY_DATA")
+
     def draw(self, context):
         _LOG.enter()
         layout = self.layout
@@ -124,7 +150,8 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
             box = self.create_box(layout, "Checks")
             _draw_messages(box, problems)
 
-        multiline(layout, ["Animation settings and the Create button", "will come here."])
+        self._face_animation(layout, scene, context, face)
+        multiline(layout, ["Body and mouth (audio) animation will come here."])
 
 
 ClassManager.add_class(MPFB_UL_Mocap_Body_Sources)

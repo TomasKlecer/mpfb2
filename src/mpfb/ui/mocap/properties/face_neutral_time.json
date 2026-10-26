@@ -1,0 +1,8 @@
+{
+    "type": "float",
+    "name": "face_neutral_time",
+    "label": "Neutral at",
+    "default": 0.0,
+    "min": 0.0,
+    "description": "Second of the source (from its start) where the actor has a neutral face"
+}

@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_extend_scene",
+    "label": "Extend scene range",
+    "default": true,
+    "description": "Move the end of the scene so the whole animation fits"
+}

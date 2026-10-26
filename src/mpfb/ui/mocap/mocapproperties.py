@@ -12,6 +12,7 @@ import os
 import bpy
 
 from ...services.sceneconfigset import SceneConfigSet
+from ...services.mocapanimationservice import DEFAULT_FACE_SETTINGS
 from .sourceproperties import VIDEO_INPUTS, face_video_index
 
 MOCAP_PROPERTIES_DIR = os.path.join(os.path.dirname(__file__), "properties")
@@ -50,4 +51,19 @@ def read_settings(scene: bpy.types.Scene) -> dict:
     settings = {"videos": videos}
     for name in ("audio_path", "audio_start", "audio_end", "audio_device"):
         settings[name] = _value(scene, name)
+    return settings
+
+
+_FACE_SETTINGS = {
+    "face_smoothing": "smoothing", "face_gain": "gain", "face_use_neutral": "use_neutral",
+    "face_neutral_time": "neutral_time", "face_mirror": "mirror", "face_extend_scene": "extend_scene",
+    "face_include_children": "include_children",
+    }
+
+
+def read_face_settings(scene: bpy.types.Scene) -> dict:
+    """Settings of the face animation for MocapAnimationService."""
+    settings = {}
+    for name, key in _FACE_SETTINGS.items():
+        settings[key] = MOCAP_PROPERTIES.get_value(name, DEFAULT_FACE_SETTINGS[key], entity_reference=scene)
     return settings

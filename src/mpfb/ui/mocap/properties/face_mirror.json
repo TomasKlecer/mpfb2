@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_mirror",
+    "label": "Mirror left/right",
+    "default": false,
+    "description": "Swap the left and right shape keys (eyeBlinkLeft <-> eyeBlinkRight and so on) when the sides come out swapped"
+}

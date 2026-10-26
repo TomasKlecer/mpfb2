@@ -1,0 +1,9 @@
+{
+    "type": "float",
+    "name": "face_gain",
+    "label": "Gain",
+    "default": 1.0,
+    "min": 0.0,
+    "max": 3.0,
+    "description": "Multiplier of all face shape keys. Above 1 makes the expressions stronger"
+}

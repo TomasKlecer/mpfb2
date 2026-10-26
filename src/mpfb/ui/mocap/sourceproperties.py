@@ -61,7 +61,7 @@ ClassManager.add_class(MPFB_PG_Mocap_Body_Source)
 
 def register_scene_properties() -> None:
     bpy.types.Scene.MPFB_MOCAP_face_source = StringProperty(
-        name="Face source", description="Saved output of the models used for the face (*_landmarks.npz)", default="")
+        name="Face source", description="Saved output of the models (*_landmarks.npz) or a Live Link Face csv used for the face", default="")
     bpy.types.Scene.MPFB_MOCAP_audio_source = StringProperty(
         name="Audio source", description="Saved output of the phoneme model used for the mouth (*_logits.npz)", default="")
     bpy.types.Scene.MPFB_MOCAP_body_sources = CollectionProperty(type=MPFB_PG_Mocap_Body_Source)

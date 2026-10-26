@@ -42,5 +42,6 @@ __all__ = [
     "MPFB_OT_Mocap_Clear_Source",
     "MPFB_OT_Mocap_Remove_Body_Source",
     "MPFB_OT_Mocap_Move_Body_Source",
-    "MPFB_OT_Mocap_Use_Last_Run"
+    "MPFB_OT_Mocap_Use_Last_Run",
+    "MPFB_OT_Mocap_Create_Face_Animation_Operator"
 ]
