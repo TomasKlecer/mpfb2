@@ -34,10 +34,15 @@ _REGISTRY = {"models": [
     ]}
 
 
-def _settings(**overrides):
-    settings = {"video_path": "", "video_pose": True, "video_hands": True, "video_face": True, "pose_model": "FULL",
-                "video_start": 0.0, "video_end": 0.0, "min_confidence": 0.5, "annotate": True,
-                "audio_path": "", "audio_start": 0.0, "audio_end": 0.0, "audio_device": "AUTO"}
+def _video(**overrides):
+    video = {"path": "", "pose": True, "hands": True, "face": False, "pose_model": "FULL", "min_confidence": 0.5,
+             "start": 0.0, "end": 0.0, "annotate": True}
+    video.update(overrides)
+    return video
+
+
+def _settings(videos=(), **overrides):
+    settings = {"videos": list(videos), "audio_path": "", "audio_start": 0.0, "audio_end": 0.0, "audio_device": "AUTO"}
     settings.update(overrides)
     return settings
 
@@ -57,16 +62,26 @@ def test_worker_is_not_a_package():
 
 
 def test_job_with_both_inputs():
-    job = MocapRunService.build_job(_settings(video_path="/v.mp4", audio_path="/a.wav", pose_model="HEAVY",
-                                              video_hands=False, video_start=1.5, video_end=4.0),
-                                    "/out", "/models", _REGISTRY)
+    video = _video(path="/v.mp4", pose_model="HEAVY", hands=False, face=True, start=1.5, end=4.0)
+    job = MocapRunService.build_job(_settings([video], audio_path="/a.wav"), "/out", "/models", _REGISTRY)
     assert job["protocol"] == _MODULE.PROTOCOL_VERSION
-    video, audio = job["tasks"]
-    assert video["type"] == "vision" and video["input"] == "/v.mp4"
-    assert video["pose"] == {"enabled": True, "model": "mediapipe/pose_landmarker_heavy.task"}
-    assert video["hands"]["enabled"] is False
-    assert (video["start"], video["end"]) == (1.5, 4.0)
+    vision, audio = job["tasks"]
+    assert vision["id"] == "video1" and vision["type"] == "vision" and vision["input"] == "/v.mp4"
+    assert vision["label"] == "Video: v.mp4"
+    assert vision["pose"] == {"enabled": True, "model": "mediapipe/pose_landmarker_heavy.task"}
+    assert vision["hands"]["enabled"] is False
+    assert vision["face"] == {"enabled": True, "model": "mediapipe/face_landmarker.task"}
+    assert (vision["start"], vision["end"]) == (1.5, 4.0)
     assert audio["type"] == "audio" and audio["model"] == "w2v" and audio["device"] == "auto"
+
+
+def test_job_with_several_videos():
+    videos = [_video(path="/front.mp4", face=True), _video(path="/side.mp4", pose_model="LITE"), _video(path="")]
+    job = MocapRunService.build_job(_settings(videos), "/out", "/models", _REGISTRY)
+    assert [task["id"] for task in job["tasks"]] == ["video1", "video2"]
+    assert [task["label"] for task in job["tasks"]] == ["Video 1: front.mp4", "Video 2: side.mp4"]
+    assert job["tasks"][1]["pose"]["model"] == "mediapipe/pose_landmarker_lite.task"
+    assert job["tasks"][1]["face"]["enabled"] is False
 
 
 def test_job_skips_empty_inputs():
@@ -79,17 +94,27 @@ def test_settings_without_inputs_are_rejected():
 
 
 def test_settings_with_missing_file_are_rejected(tmp_path):
-    problems = MocapRunService.validate_settings(_settings(video_path=str(tmp_path / "nope.mp4")))
+    problems = MocapRunService.validate_settings(_settings([_video(path=str(tmp_path / "nope.mp4"))]))
     assert any("does not exist" in problem for problem in problems)
 
 
 def test_settings_with_no_model_or_bad_range_are_rejected(tmp_path):
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"")
-    assert MocapRunService.validate_settings(_settings(video_path=str(video), video_pose=False, video_hands=False,
-                                                       video_face=False))
-    assert MocapRunService.validate_settings(_settings(video_path=str(video), video_start=3.0, video_end=2.0))
-    assert not MocapRunService.validate_settings(_settings(video_path=str(video), video_start=3.0, video_end=0.0))
+    path = str(video)
+    assert MocapRunService.validate_settings(_settings([_video(path=path, pose=False, hands=False, face=False)]))
+    assert MocapRunService.validate_settings(_settings([_video(path=path, start=3.0, end=2.0)]))
+    assert not MocapRunService.validate_settings(_settings([_video(path=path, start=3.0, end=0.0)]))
+
+
+def test_only_one_video_can_have_the_face(tmp_path):
+    first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    first.write_bytes(b"")
+    second.write_bytes(b"")
+    two_faces = [_video(path=str(first), face=True), _video(path=str(second), face=True)]
+    assert any("face" in problem for problem in MocapRunService.validate_settings(_settings(two_faces)))
+    one_face = [_video(path=str(first), face=True), _video(path=str(second))]
+    assert not MocapRunService.validate_settings(_settings(one_face))
 
 
 def test_worker_messages_update_the_job():

@@ -65,6 +65,9 @@ if SystemService.is_blender_version_at_least():
         "MPFB_PT_Developer_Panel",
         "MPFB_PT_Hair_Editor_Panel",
         "MPFB_PT_Mocap_Panel",
+        "MPFB_PT_Mocap_Run_Models_Panel",
+        "MPFB_PT_Mocap_Animation_Panel",
+        "MPFB_PT_Mocap_Environment_Panel",
         "MPFB_PT_Ai_Panel",
         "UI_DUMMY_VALUE"
         ]

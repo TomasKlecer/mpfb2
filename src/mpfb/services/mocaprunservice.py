@@ -150,25 +150,32 @@ class MocapRunService():
 
     @staticmethod
     def build_job(settings: dict[str, Any], output_dir: str, models_dir: str, registry: dict | None = None) -> dict:
-        """The job.json for the worker, settings are the panel values."""
+        """The job.json for the worker, settings are the panel values.
+
+        settings["videos"] is a list of videos, each a dict with path, pose, hands, face, pose_model, start, end, min_confidence and annotate.
+        Every video becomes one task."""
+        def model(enabled, model_id):
+            return {"enabled": bool(enabled), "model": MocapRunService.model_path(model_id, registry) if enabled else ""}
+
         tasks = []
-        video = (settings.get("video_path") or "").strip()
-        if video:
-            def model(enabled, model_id):
-                return {"enabled": bool(enabled), "model": MocapRunService.model_path(model_id, registry) if enabled else ""}
+        videos = [video for video in settings.get("videos", []) if (video.get("path") or "").strip()]
+        for number, video in enumerate(videos, start=1):
+            path = video["path"].strip()
+            name = os.path.basename(path)
             tasks.append({
-                "id": "video", "type": "vision", "input": video,
-                "start": float(settings.get("video_start", 0.0)), "end": float(settings.get("video_end", 0.0)),
-                "min_confidence": float(settings.get("min_confidence", 0.5)),
-                "annotate": bool(settings.get("annotate", True)),
-                "pose": model(settings.get("video_pose", True), POSE_MODEL_IDS[settings.get("pose_model", "FULL")]),
-                "hands": model(settings.get("video_hands", True), HAND_MODEL_ID),
-                "face": model(settings.get("video_face", True), FACE_MODEL_ID),
+                "id": "video%d" % number, "type": "vision", "input": path,
+                "label": ("Video %d: %s" % (number, name)) if len(videos) > 1 else ("Video: " + name),
+                "start": float(video.get("start", 0.0)), "end": float(video.get("end", 0.0)),
+                "min_confidence": float(video.get("min_confidence", 0.5)),
+                "annotate": bool(video.get("annotate", True)),
+                "pose": model(video.get("pose", True), POSE_MODEL_IDS[video.get("pose_model", "FULL")]),
+                "hands": model(video.get("hands", True), HAND_MODEL_ID),
+                "face": model(video.get("face", False), FACE_MODEL_ID),
                 })
         audio = (settings.get("audio_path") or "").strip()
         if audio:
             tasks.append({
-                "id": "audio", "type": "audio", "input": audio,
+                "id": "audio", "type": "audio", "input": audio, "label": "Audio: " + os.path.basename(audio),
                 "start": float(settings.get("audio_start", 0.0)), "end": float(settings.get("audio_end", 0.0)),
                 "device": str(settings.get("audio_device", "AUTO")).lower(),
                 "model": MocapRunService.model_path(PHONEME_MODEL_ID, registry),
@@ -176,20 +183,33 @@ class MocapRunService():
         return {"protocol": PROTOCOL_VERSION, "output_dir": output_dir, "models_dir": models_dir, "tasks": tasks}
 
     @staticmethod
+    def validate_video(video: dict[str, Any]) -> list[str]:
+        """Problems of video input as a messages for the user."""
+        problems = []
+        path = (video.get("path") or "").strip()
+        if not path:
+            return ["Select a video or an image"]
+        name = os.path.basename(path)
+        if not os.path.isfile(path):
+            problems.append("The video or image does not exist: " + path)
+        if not (video.get("pose", True) or video.get("hands", True) or video.get("face", False)):
+            problems.append("Enable at least one of pose/hands/face for " + name)
+        if 0 < float(video.get("end", 0.0)) <= float(video.get("start", 0.0)):
+            problems.append("The end of %s must be after its start (or 0 for the end of the video)" % name)
+        return problems
+
+    @staticmethod
     def validate_settings(settings: dict[str, Any]) -> list[str]:
         """Reports problems which make run pointless as messages for the user. Empty list when the run can start."""
         problems = []
-        video = (settings.get("video_path") or "").strip()
+        videos = [video for video in settings.get("videos", []) if (video.get("path") or "").strip()]
         audio = (settings.get("audio_path") or "").strip()
-        if not video and not audio:
+        if not videos and not audio:
             problems.append("Select a video, image or an audio recording")
-        if video:
-            if not os.path.isfile(video):
-                problems.append("The video or image does not exist: " + video)
-            if not (settings.get("video_pose", True) or settings.get("video_hands", True) or settings.get("video_face", True)):
-                problems.append("Enable at least one of pose/hands/face for the video")
-            if 0 < float(settings.get("video_end", 0.0)) <= float(settings.get("video_start", 0.0)):
-                problems.append("The video end must be after its start (or 0 for the end of the video)")
+        for video in videos:
+            problems += MocapRunService.validate_video(video)
+        if sum(1 for video in videos if video.get("face")) > 1:
+            problems.append("Only one video can be used for the face")
         if audio:
             if not os.path.isfile(audio):
                 problems.append("The audio recording does not exist: " + audio)
@@ -237,7 +257,7 @@ class MocapRunService():
 
         job = RunJob(run_dir)
         for task in job_spec["tasks"]:
-            job.tasks[task["id"]] = TaskState(task["id"], "Video / image" if task["type"] == "vision" else "Audio")
+            job.tasks[task["id"]] = TaskState(task["id"], task.get("label") or ("Video / image" if task["type"] == "vision" else "Audio"))
         job.status = RunJob.RUNNING
         job.started_at = time.time()
         _JOB = job

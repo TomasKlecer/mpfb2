@@ -20,12 +20,12 @@ job.json:
       "output_dir": "...",            every output file is written here
       "models_dir": ".../ai_models",  model paths in the tasks are relative to this
       "tasks": [
-        {"id": "video", "type": "vision", "input": "...", "start": 0.0, "end": 0.0, "min_confidence": 0.5,
+        {"id": "video1", "type": "vision", "label": "Video 1: clip.mp4", "input": "...", "start": 0.0, "end": 0.0, "min_confidence": 0.5,
          "annotate": true,
          "pose":  {"enabled": true, "model": "mediapipe/pose_landmarker_full.task"},
          "hands": {"enabled": true, "model": "mediapipe/hand_landmarker.task"},
          "face":  {"enabled": true, "model": "mediapipe/face_landmarker.task"}},
-        {"id": "audio", "type": "audio", "input": "...", "start": 0.0, "end": 0.0, "device": "auto",
+        {"id": "audio", "type": "audio", "label": "Audio: speech.wav", "input": "...", "start": 0.0, "end": 0.0, "device": "auto",
          "model": "wav2vec2-xlsr-53-espeak-cv-ft"}
       ]
     }
@@ -75,7 +75,7 @@ def main(argv: list[str]) -> int:
     tasks = job.get("tasks", [])
     failures = 0
     for index, task in enumerate(tasks):
-        emit("task_start", task=task["id"], index=index, count=len(tasks), label=_LABELS.get(task["type"], task["type"]))
+        emit("task_start", task=task["id"], index=index, count=len(tasks), label=task.get("label") or _LABELS.get(task["type"], task["type"]))
         try:
             run_task(task, job)
             emit("task_done", task=task["id"])

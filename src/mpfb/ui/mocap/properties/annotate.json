@@ -1,7 +1,7 @@
 {
     "type": "boolean",
     "name": "annotate",
-    "label": "Annotated video",
+    "label": "Save annotated video",
     "default": true,
-    "description": "Write a copy of the video with the detected landmarks drawn over it"
+    "description": "Also save a copy of the video with the detected landmarks drawn over it, only for checking the results by eye. The animation doesnt need it."
 }

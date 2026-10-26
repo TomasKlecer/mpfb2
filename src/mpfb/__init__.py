@@ -224,6 +224,12 @@ def register():
     _LOG.debug("About to request class registration")
     ClassManager.register_classes()
 
+    # The motion capture scene properties point to property groups, which have to be registered first
+    from .services import SystemService as _SystemService
+    if _SystemService.is_blender_version_at_least():
+        from .ui.mocap.sourceproperties import register_scene_properties
+        register_scene_properties()
+
     from .services import SystemService
 
     if SystemService.is_blender_version_at_least():
@@ -265,6 +271,12 @@ def unregister():
         MocapRunService.cancel_run()
     except Exception as err:  # pylint: disable=W0718
         _LOG.error("Could not cancel the motion capture environment install", err)
+
+    try:
+        from .ui.mocap.sourceproperties import unregister_scene_properties
+        unregister_scene_properties()
+    except Exception as err:  # pylint: disable=W0718
+        _LOG.error("Could not remove the motion capture scene properties", err)
 
     _LOG.debug("About to unregister classes")
     global ClassManager  # pylint: disable=W0603,W0602
