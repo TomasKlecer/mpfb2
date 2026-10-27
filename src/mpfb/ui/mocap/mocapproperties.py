@@ -13,7 +13,8 @@ import bpy
 
 from ...services.sceneconfigset import SceneConfigSet
 from ...services.mocapanimationservice import DEFAULT_FACE_SETTINGS
-from .sourceproperties import VIDEO_INPUTS, face_video_index
+from ...services.mocaplipsyncservice import DEFAULT_LIPSYNC_SETTINGS
+from .sourceproperties import VIDEO_INPUTS, AUDIO_SOURCE, face_video_index, absolute
 
 MOCAP_PROPERTIES_DIR = os.path.join(os.path.dirname(__file__), "properties")
 MOCAP_PROPERTIES = SceneConfigSet.from_definitions_in_json_directory(MOCAP_PROPERTIES_DIR, prefix="MOCAP_")
@@ -66,4 +67,26 @@ def read_face_settings(scene: bpy.types.Scene) -> dict:
     settings = {}
     for name, key in _FACE_SETTINGS.items():
         settings[key] = MOCAP_PROPERTIES.get_value(name, DEFAULT_FACE_SETTINGS[key], entity_reference=scene)
+    settings["skip_speech"] = speech_from_audio(scene)
+    return settings
+
+
+def speech_from_audio(scene: bpy.types.Scene) -> bool:
+    """True when the mouth is left to the lipsync: an audio source is picked and the speech is not kept from video."""
+    if not absolute(getattr(scene, AUDIO_SOURCE, "")):
+        return False
+    return not MOCAP_PROPERTIES.get_value("face_keep_speech", False, entity_reference=scene)
+
+
+_LIPSYNC_SETTINGS = {
+    "lipsync_strength": "strength", "lipsync_lead": "lead", "lipsync_transition": "transition",
+    "lipsync_add_sound": "add_sound", "face_extend_scene": "extend_scene", "face_include_children": "include_children",
+    }
+
+
+def read_lipsync_settings(scene: bpy.types.Scene) -> dict:
+    """Settings of the lipsync for MocapAnimationService."""
+    settings = {}
+    for name, key in _LIPSYNC_SETTINGS.items():
+        settings[key] = MOCAP_PROPERTIES.get_value(name, DEFAULT_LIPSYNC_SETTINGS[key], entity_reference=scene)
     return settings

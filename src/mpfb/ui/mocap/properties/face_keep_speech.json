@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_keep_speech",
+    "label": "Keep speech shapes from video",
+    "default": false,
+    "description": "Keep jaw, lips and tongue movements from the face source even with a lipsync. Normally they are left out so the mouth does not move twice"
+}

@@ -1,0 +1,9 @@
+{
+    "type": "float",
+    "name": "lipsync_transition",
+    "label": "Transition",
+    "default": 0.07,
+    "min": 0.02,
+    "max": 0.25,
+    "description": "Seconds of the blend between neighbouring visemes. Longer is softer."
+}

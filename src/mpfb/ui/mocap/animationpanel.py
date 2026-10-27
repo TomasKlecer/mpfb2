@@ -13,9 +13,10 @@ from ... import ClassManager
 from ...services.logservice import LogService
 from ...services.uiservice import UiService
 from ...services.mocapsourceservice import MocapSourceService, ROLE_FACE, ROLE_BODY, ROLE_AUDIO, ERROR, KIND_LIVELINK
+from ...services.mocapanimationservice import MocapAnimationService
 from ...ui.abstractpanel import Abstract_Panel
 from .mocappanel import multiline
-from .mocapproperties import MOCAP_PROPERTIES
+from .mocapproperties import MOCAP_PROPERTIES, speech_from_audio
 from .operators.face_animation_operator import find_basemesh
 from .sourceproperties import FACE_SOURCE, AUDIO_SOURCE, BODY_SOURCES, BODY_INDEX, absolute, main_body_index
 
@@ -119,7 +120,11 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
         neutral = row.row(align=True)
         neutral.enabled = bool(MOCAP_PROPERTIES.get_value("face_use_neutral", False, entity_reference=scene))
         MOCAP_PROPERTIES.draw_properties(scene, neutral, ["face_neutral_time"])
-        MOCAP_PROPERTIES.draw_properties(scene, box, ["face_mirror", "face_include_children", "face_extend_scene"])
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["face_mirror"])
+        if absolute(getattr(scene, AUDIO_SOURCE, "")):
+            MOCAP_PROPERTIES.draw_properties(scene, box, ["face_keep_speech"])
+            if speech_from_audio(scene):
+                box.label(text="Jaw, lips and tongue are left to the lipsync.", icon="INFO")
         if face is not None and face.get("kind") == KIND_LIVELINK and MOCAP_PROPERTIES.get_value("face_mirror", False, entity_reference=scene):
             box.label(text="Live Link Face already uses the actor's left/right.", icon="INFO")
 
@@ -133,6 +138,46 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
         row = box.row()
         row.scale_y = 1.5
         row.operator("mpfb.mocap_create_face_animation", icon="SHAPEKEY_DATA")
+
+    def _lipsync(self, layout, scene, context, audio):
+        """Settings of the lipsync and the button to create it."""
+        box = self.create_box(layout, "Lipsync")
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["lipsync_strength"], slider=True)
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["lipsync_lead", "lipsync_transition"])
+        MOCAP_PROPERTIES.draw_properties(scene, box, ["lipsync_add_sound"])
+        basemesh = find_basemesh(context)
+        if basemesh is None:
+            box.label(text="Select an MPFB2 character.", icon="INFO")
+        elif audio is None:
+            box.label(text="Pick an audio source above.", icon="INFO")
+        else:
+            box.label(text="Starts at frame %d on %s" % (scene.frame_current, basemesh.name))
+        row = box.row()
+        row.scale_y = 1.5
+        row.operator("mpfb.mocap_create_lipsync", icon="SPEAKER")
+
+    def _layers(self, layout, context):
+        """The NLA layers of the selected character and the bake button."""
+        box = self.create_box(layout, "Layers")
+        MOCAP_PROPERTIES.draw_properties(context.scene, box, ["face_include_children", "face_extend_scene"])
+        basemesh = find_basemesh(context)
+        tracks = MocapAnimationService.layer_tracks(basemesh) if basemesh is not None else []
+        if not tracks:
+            box.label(text="Face and lipsync are kept as separate layers (NLA tracks).")
+            return
+        column = box.column(align=True)
+        for track in tracks:
+            for strip in track.strips:
+                column.label(text="%s: %s (%d - %d)%s" % (track.name, strip.action.name if strip.action else "-",
+                                                         strip.frame_start, strip.frame_end, ", muted" if track.mute else ""),
+                             icon="NLA")
+        animation_data = basemesh.data.shape_keys.animation_data
+        if animation_data and animation_data.action:
+            box.label(text="Active action: " + animation_data.action.name, icon="ACTION")
+        row = box.row()
+        row.scale_y = 1.2
+        row.operator("mpfb.mocap_bake_layers", icon="RENDER_ANIMATION")
 
     def draw(self, context):
         _LOG.enter()
@@ -151,7 +196,9 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
             _draw_messages(box, problems)
 
         self._face_animation(layout, scene, context, face)
-        multiline(layout, ["Body and mouth (audio) animation will come here."])
+        self._lipsync(layout, scene, context, audio)
+        self._layers(layout, context)
+        multiline(layout, ["Body animation will come here."])
 
 
 ClassManager.add_class(MPFB_UL_Mocap_Body_Sources)

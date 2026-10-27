@@ -188,6 +188,9 @@ class MocapSourceService():
         if task is not None:
             # job.json may come from another system, so split on both kinds of separators
             info["input_name"] = re.split(r"[\\/]", task.get("input", ""))[-1] or None
+            info["input_path"] = task.get("input")
+            info["input_start"] = float(task.get("start", 0.0))
+            info["input_end"] = float(task.get("end", 0.0))
         try:
             with np.load(path, allow_pickle=False) as data:
                 keys = set(data.files)

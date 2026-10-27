@@ -1,0 +1,9 @@
+{
+    "type": "float",
+    "name": "lipsync_strength",
+    "label": "Strength",
+    "default": 1.0,
+    "min": 0.0,
+    "max": 2.0,
+    "description": "Multiplier of the viseme shape keys"
+}

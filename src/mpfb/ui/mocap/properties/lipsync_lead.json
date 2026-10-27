@@ -1,0 +1,9 @@
+{
+    "type": "float",
+    "name": "lipsync_lead",
+    "label": "Lead",
+    "default": 0.04,
+    "min": 0.0,
+    "max": 0.2,
+    "description": "Seconds the mouth starts moving before the sound. Without it, the lipsync might looks late"
+}

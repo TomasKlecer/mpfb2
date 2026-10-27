@@ -20,6 +20,7 @@ from .run_mocap_operator import (MPFB_OT_Mocap_Run_Operator, MPFB_OT_Mocap_Cance
 from .source_operators import (MPFB_OT_Mocap_Pick_Source, MPFB_OT_Mocap_Clear_Source, MPFB_OT_Mocap_Remove_Body_Source,
                                MPFB_OT_Mocap_Move_Body_Source, MPFB_OT_Mocap_Use_Last_Run)
 from .face_animation_operator import MPFB_OT_Mocap_Create_Face_Animation_Operator
+from .lipsync_operator import MPFB_OT_Mocap_Create_Lipsync_Operator, MPFB_OT_Mocap_Bake_Layers_Operator
 
 __all__ = [
     "MPFB_OT_Mocap_Install_Env_Operator",
@@ -35,5 +36,7 @@ __all__ = [
     "MPFB_OT_Mocap_Remove_Body_Source",
     "MPFB_OT_Mocap_Move_Body_Source",
     "MPFB_OT_Mocap_Use_Last_Run",
-    "MPFB_OT_Mocap_Create_Face_Animation_Operator"
+    "MPFB_OT_Mocap_Create_Face_Animation_Operator",
+    "MPFB_OT_Mocap_Create_Lipsync_Operator",
+    "MPFB_OT_Mocap_Bake_Layers_Operator"
 ]

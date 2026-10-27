@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "lipsync_add_sound",
+    "label": "Add sound to scene",
+    "default": true,
+    "description": "Put the recording into the sequencer at the start of the lipsync, so it plays in sync"
+}

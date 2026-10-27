@@ -6,9 +6,13 @@
 # Supervisor:   Ing. Tomáš Chlubna, Ph.D.
 # Description:  unit tests for MocapAnimationService
 # ------------------------------------------------------------------------------
-"""Tests for MocapAnimationService: cleaning up the face curves, writing the shape key action and the drivers."""
+"""Tests for MocapAnimationService: cleaning up the face curves, writing the shape key action, the drivers,
+the NLA layers, baking and the sound strip."""
 
+import math
+import struct
 import sys
+import wave
 import bpy
 import numpy as np
 import pytest
@@ -165,9 +169,104 @@ def test_face_animation_on_a_character(tmp_path):
         assert result["animated"] == 3
         assert result["frame_start"] == 5
         assert scene.frame_end >= result["frame_end"]
-        assert basemesh.data.shape_keys.animation_data.action == action
+        animation_data = basemesh.data.shape_keys.animation_data
+        assert animation_data.action is None
+        track = animation_data.nla_tracks[_MODULE.FACE_TRACK]
+        assert track.strips[0].action == action
+        assert track.strips[0].frame_start == 5
     finally:
         bpy.data.actions.remove(action)
+
+
+def test_face_animation_leaves_speech_to_the_lipsync(tmp_path):
+    if not FaceService.is_faceunits01_installed():
+        pytest.skip("faceunits01 is not installed")
+    basemesh = HumanService.create_human()
+    path = _write_face_source(tmp_path / "video1_clip_landmarks.npz")
+    result = MocapAnimationService.create_face_animation(basemesh, path, {"include_children": False, "skip_speech": True},
+                                                         bpy.context.scene, "clip.mp4")
+    action = bpy.data.actions[result["action"]]
+    try:
+        paths = [fcurve.data_path for fcurve in MocapAnimationService._action_fcurves(action)]
+        assert 'key_blocks["eyeBlinkLeft"].value' in paths
+        assert 'key_blocks["jawOpen"].value' not in paths
+        assert result["skipped_speech"]
+    finally:
+        bpy.data.actions.remove(action)
+
+
+def _layered_mesh():
+    """A mesh with a face layer (jawOpen 0.5) and a lipsync layer (viseme_aa 1.0) on NLA tracks."""
+    obj = _mesh_with_shape_keys("mocap_layers_test", ["jawOpen", "viseme_aa"])
+    key = obj.data.shape_keys
+    face = MocapAnimationService.write_shape_key_action(key, "MPFB_Face_test", 1, ["jawOpen"], np.full((10, 1), 0.5))
+    MocapAnimationService.place_on_track(key, face, _MODULE.FACE_TRACK, 1, 10)
+    lipsync = MocapAnimationService.write_shape_key_action(key, "MPFB_Lipsync_test", 3, ["viseme_aa"], np.ones((4, 1)))
+    MocapAnimationService.place_on_track(key, lipsync, _MODULE.LIPSYNC_TRACK, 3, 6)
+    return obj, [face, lipsync]
+
+
+def test_layers_are_separate_nla_tracks():
+    obj, actions = _layered_mesh()
+    key = obj.data.shape_keys
+    try:
+        assert key.animation_data.action is None
+        assert [track.name for track in MocapAnimationService.layer_tracks(obj)] == [_MODULE.FACE_TRACK, _MODULE.LIPSYNC_TRACK]
+        bpy.context.scene.frame_set(4)
+        assert key.key_blocks["jawOpen"].value == pytest.approx(0.5, abs=1e-4)
+        assert key.key_blocks["viseme_aa"].value == pytest.approx(1.0, abs=1e-4)
+        # A new lipsync over the same frames replaces the old strip
+        again = MocapAnimationService.write_shape_key_action(key, "MPFB_Lipsync_again", 4, ["viseme_aa"], np.ones((2, 1)))
+        actions.append(again)
+        MocapAnimationService.place_on_track(key, again, _MODULE.LIPSYNC_TRACK, 4, 5)
+        assert [strip.action for strip in key.animation_data.nla_tracks[_MODULE.LIPSYNC_TRACK].strips] == [again]
+    finally:
+        _remove(obj)
+        for action in actions:
+            bpy.data.actions.remove(action)
+
+
+def test_layers_bake_into_one_action():
+    obj, actions = _layered_mesh()
+    key = obj.data.shape_keys
+    try:
+        result = MocapAnimationService.bake_layers(obj)
+        baked = bpy.data.actions[result["action"]]
+        actions.append(baked)
+        assert key.animation_data.action == baked
+        assert all(track.mute for track in MocapAnimationService.layer_tracks(obj))
+        assert (result["frame_start"], result["frame_end"]) == (1, 10)
+        scene = bpy.context.scene
+        scene.frame_set(4)
+        assert key.key_blocks["jawOpen"].value == pytest.approx(0.5, abs=1e-4)
+        assert key.key_blocks["viseme_aa"].value == pytest.approx(1.0, abs=1e-4)
+        scene.frame_set(8)
+        assert key.key_blocks["viseme_aa"].value == pytest.approx(0.0, abs=1e-4)
+    finally:
+        _remove(obj)
+        for action in actions:
+            bpy.data.actions.remove(action)
+
+
+def test_sound_strip_is_placed_and_trimmed(tmp_path):
+    path = str(tmp_path / "line.wav")
+    with wave.open(path, "wb") as sound:
+        sound.setnchannels(1)
+        sound.setsampwidth(2)
+        sound.setframerate(16000)
+        sound.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(i / 10.0))) for i in range(16000 * 4)))
+    scene = bpy.context.scene
+    fps = scene.render.fps / scene.render.fps_base
+    try:
+        strip = MocapAnimationService.add_sound_strip(scene, path, "MPFB_Lipsync_line", 20, 1.0, int(2 * fps), fps)
+    except RuntimeError as err:
+        pytest.skip("No sound support in this blender: %s" % err)
+    try:
+        assert strip.frame_final_start == 20
+        assert strip.frame_final_end == pytest.approx(20 + int(2 * fps), abs=1)
+    finally:
+        editor = scene.sequence_editor
+        (editor.strips if hasattr(editor, "strips") else editor.sequences).remove(strip)
 
 
 def test_livelink_csv_gives_face_curves(tmp_path):

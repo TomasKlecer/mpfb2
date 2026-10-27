@@ -11,6 +11,12 @@
 Face: the 52 blendshapes of the mediapipe face landmarker (or a Live Link Face csv) are ARKit names.
 Curves are cleaned up (gaps, neutral face, smoothing, gain), resampled to the scene fps and written as action on the shape keys of the basemesh.
 Meshes fitted to the basemesh (eyes, eyelashes, eyebrows, clothes) can follow it through drivers.
+
+Lipsync: visemes02 curves from the phoneme model.
+
+Face and lipsync are separate layers, each action is a strip on its own NLA track of the shape keys ("MPFB Face", "MPFB Lipsync").
+They play together in blender and can be exported as separate clips, or baked into one action.
+With a lipsync, the speech face units are by default left out of the face layer so the mouth does not move twice.
 """
 
 import math
@@ -25,7 +31,9 @@ from .logservice import LogService
 from .objectservice import ObjectService
 from .clothesservice import ClothesService
 from .faceservice import FaceService, ARKIT_FACEUNITS
+from .faceservice import META_VISEMES
 from .mocapsourceservice import MocapSourceService
+from .mocaplipsyncservice import MocapLipsyncService, SPEECH_FACEUNITS, DEFAULT_LIPSYNC_SETTINGS
 
 _LOG = LogService.get_logger("services.mocapanimationservice")
 
@@ -41,8 +49,15 @@ ONE_EURO_BETA = 0.5
 ONE_EURO_BETA_REDUCTION = 0.7
 ONE_EURO_D_CUTOFF = 1.0
 
-# Names of the basemesh children the face units were interpolated to (so it is done only once)
+# Names of the basemesh children the face units / visemes were interpolated to (so it is done only once)
 INTERPOLATED_CHILDREN_PROP = "mpfb_mocap_faceunits_children"
+INTERPOLATED_VISEMES_PROP = "mpfb_mocap_visemes_children"
+
+# NLA tracks of the layers on the shape keys of the basemesh
+TRACK_PREFIX = "MPFB "
+FACE_TRACK = "MPFB Face"
+LIPSYNC_TRACK = "MPFB Lipsync"
+BAKED_ACTION = "MPFB_Baked"
 
 DEFAULT_FACE_SETTINGS = {
     "smoothing": 0.5,
@@ -52,6 +67,7 @@ DEFAULT_FACE_SETTINGS = {
     "mirror": False,
     "extend_scene": True,
     "include_children": True,
+    "skip_speech": False,
     }
 
 
@@ -215,15 +231,30 @@ class MocapAnimationService():
                 if child != basemesh and child.type == 'MESH' and ClothesService.find_clothes_absolute_path(child)]
 
     @staticmethod
-    def interpolate_to_children(basemesh: bpy.types.Object) -> None:
-        """Interpolate the face units to the fitted meshes which did not get them yet."""
+    def interpolate_to_children(basemesh: bpy.types.Object, done_prop: str = INTERPOLATED_CHILDREN_PROP) -> None:
+        """Interpolate the face units (or visemes) to the fitted meshes which did not get them yet."""
         children = sorted(child.name for child in MocapAnimationService.fitted_children(basemesh))
-        done = set(str(basemesh.get(INTERPOLATED_CHILDREN_PROP, "")).split("|")) - {""}
+        done = set(str(basemesh.get(done_prop, "")).split("|")) - {""}
         if set(children) <= done:
             return
-        _LOG.info("Interpolating the face units to", [name for name in children if name not in done])
+        _LOG.info("Interpolating the face shape keys to", [name for name in children if name not in done])
         FaceService.interpolate_targets(basemesh)
-        basemesh[INTERPOLATED_CHILDREN_PROP] = "|".join(sorted(done | set(children)))
+        basemesh[done_prop] = "|".join(sorted(done | set(children)))
+
+    @staticmethod
+    def ensure_visemes(basemesh: bpy.types.Object) -> list[str]:
+        """Find or load the visemes02 shape keys on the basemesh."""
+        keys = basemesh.data.shape_keys
+        present = [name for name in META_VISEMES if keys and name in keys.key_blocks]
+        if not present:
+            _LOG.info("Loading the visemes02 shape keys onto", basemesh.name)
+            FaceService.load_targets(basemesh, load_microsoft_visemes=False, load_meta_visemes=True,
+                                     load_arkit_faceunits=False)
+            keys = basemesh.data.shape_keys
+            present = [name for name in META_VISEMES if keys and name in keys.key_blocks]
+            if not present:
+                raise RuntimeError("The visemes02 asset pack is not installed")
+        return present
 
     @staticmethod
     def drive_children(basemesh: bpy.types.Object, names: list[str]) -> int:
@@ -299,10 +330,131 @@ class MocapAnimationService():
         return action
 
     @staticmethod
-    def action_name_for(path: str, input_name: str | None) -> str:
+    def action_name_for(path: str, input_name: str | None, prefix: str = "MPFB_Face_") -> str:
         stem = os.path.splitext(input_name or os.path.basename(path))[0]
-        stem = re.sub(r"_landmarks$", "", stem)
-        return "MPFB_Face_" + stem
+        stem = re.sub(r"_(landmarks|logits)$", "", stem)
+        return prefix + stem
+
+    # ------- Layers ---------
+
+    @staticmethod
+    def _action_fcurves(action: bpy.types.Action, slot: Any = None) -> list[Any]:
+        """Return the fcurves of the action for the given slot.
+        Blender 4.4+ keeps them in a channelbag of the slot, older versions directly in action.fcurves."""
+        if not hasattr(action, "slots"):
+            return list(action.fcurves)  # pyright: ignore[reportAttributeAccessIssue]
+        if slot is None and len(action.slots):
+            slot = action.slots[0]
+        if slot is None:
+            return []
+        try:
+            from bpy_extras import anim_utils  # pylint: disable=C0415
+            channelbag = anim_utils.action_get_channelbag_for_slot(action, slot)
+            return list(channelbag.fcurves) if channelbag else []
+        except (ImportError, AttributeError):
+            for layer in action.layers:
+                for strip in layer.strips:
+                    channelbag = strip.channelbag(slot)
+                    if channelbag:
+                        return list(channelbag.fcurves)
+            return []
+
+    @staticmethod
+    def place_on_track(key: bpy.types.Key, action: bpy.types.Action, track_name: str, frame_start: int, frame_end: int) -> Any:
+        """Move action from the shape keys onto a strip of NLA track. Strips of that track in the same frames are replaced.
+        Also re-enables the layers: the baked action is unassigned and the tracks with MPFB prefix are unmuted."""
+        animation_data = key.animation_data or key.animation_data_create()
+        slot = getattr(animation_data, "action_slot", None)
+        animation_data.action = None
+        track = next((track for track in animation_data.nla_tracks if track.name == track_name), None)
+        if track is None:
+            track = animation_data.nla_tracks.new()
+            track.name = track_name
+        for other in animation_data.nla_tracks:
+            if other.name.startswith(TRACK_PREFIX):
+                other.mute = False
+        for strip in list(track.strips):
+            if strip.frame_start <= frame_end and strip.frame_end >= frame_start:
+                track.strips.remove(strip)
+        strip = track.strips.new(action.name, int(frame_start), action)
+        # Layer only acts in its own frames (so the mouth does not stay open after the voice line)
+        strip.extrapolation = 'NOTHING'
+        if slot is not None and hasattr(strip, "action_slot") and strip.action_slot != slot:
+            strip.action_slot = slot
+        return strip
+
+    @staticmethod
+    def layer_tracks(basemesh: bpy.types.Object) -> list[Any]:
+        """The MPFB NLA tracks on the shape keys of the basemesh."""
+        keys = basemesh.data.shape_keys
+        if not keys or not keys.animation_data:
+            return []
+        return [track for track in keys.animation_data.nla_tracks if track.name.startswith(TRACK_PREFIX)]
+
+    @staticmethod
+    def bake_layers(basemesh: bpy.types.Object) -> dict[str, Any]:
+        """Evaluate the NLA tracks of the shape keys into one action, assign it and mute the original tracks."""
+        key = basemesh.data.shape_keys
+        tracks = [track for track in (key.animation_data.nla_tracks if key and key.animation_data else []) if not track.mute]
+        strips = [strip for track in tracks for strip in track.strips if not strip.mute and strip.action]
+        if not strips:
+            raise RuntimeError("Nothing to bake, create a face or lipsync animation first")
+        frame_start = int(math.floor(min(strip.frame_start for strip in strips)))
+        frame_end = int(math.ceil(max(strip.frame_end for strip in strips)))
+        frames = np.arange(frame_start, frame_end + 1, dtype=np.float64)
+
+        channels: dict[str, np.ndarray] = {}
+        # Tracks are evaluated from the bottom up - strip replaces/adds to what is below it
+        for track in tracks:
+            for strip in track.strips:
+                if strip.mute or not strip.action:
+                    continue
+                inside = (frames >= strip.frame_start) & (frames <= strip.frame_end)
+                local = strip.action_frame_start + (frames[inside] - strip.frame_start) / max(strip.scale, 1e-6)
+                for fcurve in MocapAnimationService._action_fcurves(strip.action, getattr(strip, "action_slot", None)):
+                    below = channels.setdefault(fcurve.data_path, np.zeros(len(frames)))
+                    values = np.array([fcurve.evaluate(frame) for frame in local])
+                    if strip.blend_type == 'ADD':
+                        below[inside] = below[inside] + values * strip.influence
+                    else:
+                        below[inside] = below[inside] * (1.0 - strip.influence) + values * strip.influence
+
+        names = []
+        columns = []
+        for data_path, values in channels.items():
+            match = re.match(r'key_blocks\["(.+)"\]\.value$', data_path)
+            if match:
+                names.append(match.group(1))
+                columns.append(values)
+        if not names:
+            raise RuntimeError("The layers have no shape key curves to bake")
+        action = MocapAnimationService.write_shape_key_action(key, BAKED_ACTION, frame_start, names,
+                                                              np.stack(columns, axis=1))
+        for track in tracks:
+            track.mute = True
+        result = {"action": action.name, "frame_start": frame_start, "frame_end": frame_end, "channels": len(names)}
+        _LOG.info("Layers baked", result)
+        return result
+
+    @staticmethod
+    def add_sound_strip(scene: bpy.types.Scene, path: str, name: str, frame_start: int, source_start: float,
+                        frames: int, fps: float) -> Any:
+        """Put the recording into sequencer aligned with lipsync. Strip of same name is replaced."""
+        editor = scene.sequence_editor or scene.sequence_editor_create()
+        strips = editor.strips if hasattr(editor, "strips") else editor.sequences  # pyright: ignore[reportAttributeAccessIssue]
+        for strip in list(strips):
+            if strip.name == name:
+                strips.remove(strip)
+        channel = max((strip.channel for strip in strips), default=0) + 1
+        offset = int(round(source_start * fps))
+        strip = strips.new_sound(name, path, channel, int(frame_start) - offset)
+        try:
+            strip.frame_offset_start = offset
+            content_end = int(frame_start) - offset + strip.frame_duration
+            strip.frame_offset_end = max(0, content_end - (int(frame_start) + frames))
+        except (AttributeError, TypeError) as err:
+            _LOG.warn("Could not trim the sound strip", err)
+        return strip
 
     @staticmethod
     def create_face_animation(basemesh: bpy.types.Object, path: str, settings: dict[str, Any], scene: bpy.types.Scene,
@@ -319,16 +471,63 @@ class MocapAnimationService():
         key = basemesh.data.shape_keys
         frame_start = scene.frame_current
         names = curves["names"]
+        values = curves["values"]
+        if settings["skip_speech"]:
+            # The lipsync layer moves the mouth
+            keep = [index for index, name in enumerate(names) if name not in SPEECH_FACEUNITS]
+            names = [names[index] for index in keep]
+            values = values[:, keep]
         animated = [name for name in names if name in present]
         action = MocapAnimationService.write_shape_key_action(
-            key, MocapAnimationService.action_name_for(path, input_name), frame_start, names, curves["values"])
+            key, MocapAnimationService.action_name_for(path, input_name), frame_start, names, values)
+        frame_end = frame_start + curves["frames"] - 1
+        MocapAnimationService.place_on_track(key, action, FACE_TRACK, frame_start, frame_end)
 
         driven = MocapAnimationService.drive_children(basemesh, animated) if settings["include_children"] else 0
-        frame_end = frame_start + curves["frames"] - 1
         if settings["extend_scene"] and scene.frame_end < frame_end:
             scene.frame_end = frame_end
 
-        result = {"action": action.name, "frame_start": frame_start, "frame_end": frame_end, "animated": len(animated),
-                  "missing": [name for name in ARKIT_FACEUNITS if name not in animated], "children": driven}
+        result = {"action": action.name, "track": FACE_TRACK, "frame_start": frame_start, "frame_end": frame_end,
+                  "animated": len(animated), "missing": [name for name in ARKIT_FACEUNITS if name not in animated],
+                  "children": driven, "skipped_speech": bool(settings["skip_speech"])}
         _LOG.info("Face animation created", result)
+        return result
+
+    @staticmethod
+    def create_lipsync(basemesh: bpy.types.Object, path: str, settings: dict[str, Any], scene: bpy.types.Scene,
+                       source: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Create lipsync of the character from an audio source, starting at current frame of the scene."""
+        settings = dict(DEFAULT_LIPSYNC_SETTINGS, **settings)
+        source = source or {}
+        fps = scene.render.fps / scene.render.fps_base
+        curves = MocapLipsyncService.prepare_lipsync_curves(path, settings, fps)
+
+        present = MocapAnimationService.ensure_visemes(basemesh)
+        if settings["include_children"]:
+            MocapAnimationService.interpolate_to_children(basemesh, INTERPOLATED_VISEMES_PROP)
+
+        key = basemesh.data.shape_keys
+        frame_start = scene.frame_current
+        frame_end = frame_start + curves["frames"] - 1
+        name = MocapAnimationService.action_name_for(path, source.get("input_name"), "MPFB_Lipsync_")
+        action = MocapAnimationService.write_shape_key_action(key, name, frame_start, curves["names"], curves["values"])
+        MocapAnimationService.place_on_track(key, action, LIPSYNC_TRACK, frame_start, frame_end)
+        animated = [viseme for viseme in curves["names"] if viseme in present]
+        driven = MocapAnimationService.drive_children(basemesh, animated) if settings["include_children"] else 0
+
+        sound = None
+        recording = source.get("input_path")
+        if settings["add_sound"]:
+            if recording and os.path.isfile(recording):
+                sound = MocapAnimationService.add_sound_strip(scene, recording, action.name, frame_start, curves["start"],
+                                                              curves["frames"], fps).name
+            else:
+                _LOG.warn("The recording of the lipsync was not found, no sound added", recording)
+        if settings["extend_scene"] and scene.frame_end < frame_end:
+            scene.frame_end = frame_end
+
+        result = {"action": action.name, "track": LIPSYNC_TRACK, "frame_start": frame_start, "frame_end": frame_end,
+                  "animated": len(animated), "phonemes": curves["phonemes"], "unknown": curves["unknown"],
+                  "children": driven, "sound": sound}
+        _LOG.info("Lipsync created", result)
         return result

@@ -1,7 +1,7 @@
 {
     "type": "boolean",
     "name": "face_include_children",
-    "label": "Eyes, eyelashes, eyebrows",
+    "label": "Fitted meshes (eyes, clothes...)",
     "default": true,
-    "description": "Also move the meshes fitted to the body (eyes, eyelashes, eyebrows, clothes)."
+    "description": "Also move the meshes fitted to the body (eyes, eyelashes, eyebrows, teeth, tongue, clothes)."
 }
