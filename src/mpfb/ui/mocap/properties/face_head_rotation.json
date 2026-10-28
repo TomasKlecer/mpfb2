@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_head_rotation",
+    "label": "Head rotation",
+    "default": true,
+    "description": "Turn the neck and head bones of the rig by the head rotation of the face source (relative to its camera)"
+}

@@ -1,0 +1,7 @@
+{
+    "type": "boolean",
+    "name": "face_head_from_body",
+    "label": "Head tilt from body video only",
+    "default": false,
+    "description": "Use only body animation for head rotation (e.g. when using helmet camera that turns with head for face video)"
+}

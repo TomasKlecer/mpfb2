@@ -14,7 +14,7 @@ import bpy
 from ...services.sceneconfigset import SceneConfigSet
 from ...services.mocapanimationservice import DEFAULT_FACE_SETTINGS
 from ...services.mocaplipsyncservice import DEFAULT_LIPSYNC_SETTINGS
-from .sourceproperties import VIDEO_INPUTS, AUDIO_SOURCE, face_video_index, absolute
+from .sourceproperties import VIDEO_INPUTS, AUDIO_SOURCE, face_video_index, main_body_index, absolute
 
 MOCAP_PROPERTIES_DIR = os.path.join(os.path.dirname(__file__), "properties")
 MOCAP_PROPERTIES = SceneConfigSet.from_definitions_in_json_directory(MOCAP_PROPERTIES_DIR, prefix="MOCAP_")
@@ -58,7 +58,7 @@ def read_settings(scene: bpy.types.Scene) -> dict:
 _FACE_SETTINGS = {
     "face_smoothing": "smoothing", "face_gain": "gain", "face_use_neutral": "use_neutral",
     "face_neutral_time": "neutral_time", "face_mirror": "mirror", "face_extend_scene": "extend_scene",
-    "face_include_children": "include_children",
+    "face_include_children": "include_children", "face_head_rotation": "head_rotation", "face_neck_share": "neck_share",
     }
 
 
@@ -68,7 +68,15 @@ def read_face_settings(scene: bpy.types.Scene) -> dict:
     for name, key in _FACE_SETTINGS.items():
         settings[key] = MOCAP_PROPERTIES.get_value(name, DEFAULT_FACE_SETTINGS[key], entity_reference=scene)
     settings["skip_speech"] = speech_from_audio(scene)
+    settings["head_rotation"] = bool(settings["head_rotation"]) and not head_from_body(scene)
     return settings
+
+
+def head_from_body(scene: bpy.types.Scene) -> bool:
+    """True when the head rotation is taken from body animation instead of head (e.g. for face video from helmet camera that turns with head)."""
+    if main_body_index(scene) < 0:
+        return False
+    return bool(MOCAP_PROPERTIES.get_value("face_head_from_body", False, entity_reference=scene))
 
 
 def speech_from_audio(scene: bpy.types.Scene) -> bool:

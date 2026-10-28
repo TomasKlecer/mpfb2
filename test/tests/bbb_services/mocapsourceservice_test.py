@@ -74,6 +74,7 @@ def test_vision_output_is_described(tmp_path):
     assert abs(info["duration"] - 2.0) < 0.05
     assert info["detection"]["face"] == pytest.approx(0.75)
     assert "hands" not in info["detection"]  # disabled in job.json
+    assert info["head_rotation"] is False      # no face_matrix in this file
     assert MocapSourceService.describe(info) == "front.mp4 · 23.10. 10:14"
     assert "face 75 %" in MocapSourceService.details(info)
 
@@ -184,7 +185,7 @@ _ROTATIONS = ["HeadYaw", "HeadPitch", "HeadRoll", "LeftEyeYaw", "LeftEyePitch", 
               "RightEyeYaw", "RightEyePitch", "RightEyeRoll"]
 
 
-def _write_livelink(path, frames=120, empty=False):
+def _write_livelink(path, frames=120, empty=False, head=0.01):
     """A csv as Live Link Face writes it: Timecode, BlendShapeCount, the ARKit names capitalized, head and eye rotation.
     The timecode starts just before a full second at 60 fps, one row is repeated."""
     names = [name[0].upper() + name[1:] for name in ARKIT_FACEUNITS]
@@ -193,7 +194,7 @@ def _write_livelink(path, frames=120, empty=False):
         total = 57 + frame
         timecode = "10:20:%02d:%02d.%03d" % (30 + total // 60, total % 60, 125)
         values = [0.0] * len(names) if empty else [0.5 if name == "JawOpen" else 0.1 for name in names]
-        row = [timecode, str(len(names))] + ["%.4f" % value for value in values] + ["0.01"] * len(_ROTATIONS)
+        row = [timecode, str(len(names))] + ["%.4f" % value for value in values] + ["%.4f" % head] * 3 + ["0.01"] * (len(_ROTATIONS) - 3)
         lines.append(",".join(row))
         if frame == 10:
             lines.append(",".join(row))
@@ -229,3 +230,17 @@ def test_empty_or_foreign_csv_is_rejected(tmp_path):
     foreign = tmp_path / "other.csv"
     foreign.write_text("a,b\n1,2\n", encoding="utf-8")
     assert MocapSourceService.check_role(MocapSourceService.inspect(str(foreign)), ROLE_FACE)[0][0] == ERROR
+
+
+def test_livelink_head_rotation_is_read(tmp_path):
+    times, angles = MocapSourceService.read_livelink_head(_write_livelink(tmp_path / "take.csv", head=0.25))
+    assert len(times) == len(angles) == 120
+    assert np.allclose(angles, 0.25)
+    assert MocapSourceService.inspect(str(tmp_path / "take.csv"))["head_rotation"] is True
+
+
+def test_livelink_without_head_rotation(tmp_path):
+    # The app writes zeros when the head rotation is switched off
+    path = _write_livelink(tmp_path / "take.csv", head=0.0)
+    assert MocapSourceService.read_livelink_head(path) is None
+    assert MocapSourceService.inspect(path)["head_rotation"] is False

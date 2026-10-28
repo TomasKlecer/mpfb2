@@ -25,15 +25,36 @@ _MODULE = sys.modules[MocapAnimationService.__module__]
 _NAMES = ["_neutral", "eyeBlinkLeft", "eyeBlinkRight", "jawOpen"]
 
 
-def _write_face_source(path, frames=150, fps=30.0, start=1.0, gaps=()):
+def _write_face_source(path, frames=150, fps=30.0, start=1.0, gaps=(), head=None):
+    """`head` is a (3, 3) rotation of the head in the camera space, written as the facial transformation matrix
+    (scaled and moved like mediapipe writes it)."""
     times = start + np.arange(frames) / fps
     blink = np.where((times > 2.0) & (times < 2.15), 1.0, 0.05)
     values = np.stack([np.zeros(frames), blink, blink, 0.4 + 0.3 * np.sin(np.pi * times)], axis=1)
     for begin, end in gaps:
         values[begin:end] = np.nan
-    np.savez(path, times_ms=np.round(times * 1000).astype(np.int64), blendshapes=values.astype(np.float32),
-             blendshape_names=np.array(_NAMES), pose=np.zeros((frames, 33, 5), dtype=np.float32))
+    arrays = {"times_ms": np.round(times * 1000).astype(np.int64), "blendshapes": values.astype(np.float32),
+              "blendshape_names": np.array(_NAMES), "pose": np.zeros((frames, 33, 5), dtype=np.float32)}
+    if head is not None:
+        matrix = np.eye(4)
+        matrix[:3, :3] = 1.1 * np.asarray(head)
+        matrix[:3, 3] = (2.0, -1.0, -40.0)
+        matrices = np.repeat(matrix[None], frames, axis=0)
+        for begin, end in gaps:
+            matrices[begin:end] = np.nan
+        arrays["face_matrix"] = matrices.astype(np.float32)
+    np.savez(path, **arrays)
     return str(path)
+
+
+def _around(axis, degrees):
+    """Rotation matrix around x, y or z."""
+    angle = math.radians(degrees)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    matrices = {"x": [[1, 0, 0], [0, cosine, -sine], [0, sine, cosine]],
+                "y": [[cosine, 0, sine], [0, 1, 0], [-sine, 0, cosine]],
+                "z": [[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]]}
+    return np.array(matrices[axis], dtype=np.float64)
 
 
 def _mesh_with_shape_keys(name, keys):
@@ -281,3 +302,135 @@ def test_livelink_csv_gives_face_curves(tmp_path):
     assert curves["frames"] == 30
     assert np.allclose(curves["values"][:, 1], 0.5)
     assert curves["values"][:, 0].max() == pytest.approx(1.0)
+
+
+# ------- Head rotation ---------
+
+def test_rotation_vectors_round_trip():
+    vectors = np.array([[0.0, 0.0, 0.0], [0.3, -0.2, 0.1], [0.0, 1.2, 0.0], [1e-8, 0.0, 0.0]])
+    matrices = MocapAnimationService.vectors_to_matrices(vectors)
+    assert np.allclose(matrices[2], _around("y", math.degrees(1.2)))
+    assert np.allclose(MocapAnimationService.matrices_to_vectors(matrices), vectors, atol=1e-7)
+    nan = MocapAnimationService.matrices_to_vectors(np.full((1, 3, 3), np.nan))
+    assert np.isnan(nan).all()
+
+
+def test_livelink_angles_turn_around_the_camera_axes():
+    matrices = MocapAnimationService.euler_to_matrices(np.radians([[30.0, 0, 0], [0, 20.0, 0], [0, 0, 10.0]]))
+    assert np.allclose(matrices[0], _around("y", 30))
+    assert np.allclose(matrices[1], _around("x", 20))
+    assert np.allclose(matrices[2], _around("z", 10))
+
+
+def test_head_turning_to_the_right_of_the_image_turns_the_rig_to_its_left(tmp_path):
+    # Seen from the camera, the head turns to the right of the image = to the character's left = +Z of the rig
+    path = _write_face_source(tmp_path / "face.npz", head=_around("y", 30))
+    curves = MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0}, 24.0)
+    assert curves["frames"] == 120
+    assert curves["start"] == pytest.approx(1.0)
+    assert np.allclose(curves["rotations"], [0.0, 0.0, math.radians(30)], atol=1e-5)
+    # Nodding down (chin towards the camera) is around the side axis of the rig
+    path = _write_face_source(tmp_path / "nod.npz", head=_around("x", 15))
+    assert np.allclose(MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0}, 24.0)["rotations"],
+                       [math.radians(15), 0.0, 0.0], atol=1e-5)
+
+
+def test_head_rotation_is_mirrored_and_relative_to_neutral(tmp_path):
+    path = _write_face_source(tmp_path / "face.npz", head=_around("y", 30) @ _around("x", 10))
+    mirrored = MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0, "mirror": True}, 30.0)
+    plain = MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0}, 30.0)
+    assert np.allclose(mirrored["rotations"], plain["rotations"] * [1.0, -1.0, -1.0], atol=1e-6)
+    neutral = MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0, "use_neutral": True, "neutral_time": 1.0}, 30.0)
+    assert np.allclose(neutral["rotations"], 0.0, atol=1e-6)
+
+
+def test_head_gaps_are_filled(tmp_path):
+    path = _write_face_source(tmp_path / "face.npz", head=_around("y", -20), gaps=[(40, 45), (80, 150)])
+    rotations = MocapAnimationService.prepare_head_curves(path, {"smoothing": 0.0}, 30.0)["rotations"]
+    assert not np.isnan(rotations).any()
+    assert rotations[42, 2] == pytest.approx(math.radians(-20), abs=1e-5)  # short gap interpolated
+    assert rotations[140, 2] == 0.0                                       # long gap back to neutral
+    assert rotations[82, 2] < 0.0                                         # signed fade, not cut to 0
+
+
+def test_source_without_head_rotation(tmp_path):
+    assert MocapAnimationService.prepare_head_curves(_write_face_source(tmp_path / "face.npz"), {}, 30.0) is None
+
+
+def test_livelink_head_rotation(tmp_path):
+    names = ["Timecode", "BlendShapeCount", "JawOpen", "HeadYaw", "HeadPitch", "HeadRoll"]
+    lines = [",".join(names)] + ["00:00:01:%02d.000,52,0.5,0.3,0,0" % frame for frame in range(60)]
+    path = tmp_path / "take.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    curves = MocapAnimationService.prepare_head_curves(str(path), {"smoothing": 0.0}, 30.0)
+    assert np.allclose(curves["rotations"], [0.0, 0.0, 0.3], atol=1e-6)
+
+
+def _rig(name, bone_names=("mixamorig:Spine2", "mixamorig:Neck", "mixamorig:Head")):
+    """Armature with a vertical chain of bones."""
+    armature = bpy.data.armatures.new(name)
+    rig = bpy.data.objects.new(name, armature)
+    bpy.context.scene.collection.objects.link(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode='EDIT')
+    parent = None
+    for index, bone_name in enumerate(bone_names):
+        bone = armature.edit_bones.new(bone_name)
+        bone.head = (0.0, 0.0, 1.2 + 0.15 * index)
+        bone.tail = (0.0, 0.0, 1.35 + 0.15 * index)
+        bone.parent = parent
+        parent = bone
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return rig
+
+
+def _remove_rig(rig):
+    armature = rig.data
+    actions = [strip.action for track in (rig.animation_data.nla_tracks if rig.animation_data else [])
+               for strip in track.strips if strip.action]
+    bpy.data.objects.remove(rig, do_unlink=True)
+    bpy.data.armatures.remove(armature)
+    for action in actions:
+        bpy.data.actions.remove(action)
+
+
+def test_head_bones_of_different_rigs():
+    mixamo = _rig("mocap_mixamo_rig")
+    default = _rig("mocap_default_rig", ("spine01", "neck01", "neck02", "neck03", "head"))
+    try:
+        assert MocapAnimationService.head_bones(mixamo) == ["mixamorig:Neck", "mixamorig:Head"]
+        assert MocapAnimationService.head_bones(default) == ["neck01", "neck02", "neck03", "head"]
+    finally:
+        _remove_rig(mixamo)
+        _remove_rig(default)
+
+
+def test_head_rotation_on_the_rig(tmp_path, monkeypatch):
+    rig = _rig("mocap_head_rig")
+    scene = bpy.context.scene
+    # The rig already has an action (a pose or a mixamo clip), it is kept under the head layer
+    clip = bpy.data.actions.new("mocap_clip")
+    rig.animation_data_create()
+    rig.animation_data.action = clip
+    rig.keyframe_insert('pose.bones["mixamorig:Spine2"].location', frame=1)
+    monkeypatch.setattr(MocapAnimationService, "find_rig", staticmethod(lambda _basemesh: rig))
+    path = _write_face_source(tmp_path / "video1_clip_landmarks.npz", head=_around("y", 30))
+    try:
+        result = MocapAnimationService.create_head_rotation(None, path, {"smoothing": 0.0, "neck_share": 0.4}, scene,
+                                                            "clip.mp4", 10)
+        assert result["bones"] == ["mixamorig:Neck", "mixamorig:Head"]
+        assert result["pushed_down"] == "mocap_clip"
+        tracks = rig.animation_data.nla_tracks
+        assert [track.name for track in tracks] == ["mocap_clip", _MODULE.HEAD_TRACK]
+        assert tracks[_MODULE.HEAD_TRACK].strips[0].blend_type == 'COMBINE'
+        assert rig.animation_data.action is None
+
+        scene.frame_set(20)
+        expected = _around("z", 30)
+        for name, share in (("mixamorig:Neck", 0.4), ("mixamorig:Head", 1.0)):
+            pose = np.array(rig.pose.bones[name].matrix.to_3x3())
+            rest = np.array(rig.data.bones[name].matrix_local.to_3x3())
+            turned = _around("z", 30 * share) if name.endswith("Neck") else expected
+            assert np.allclose(pose, turned @ rest, atol=1e-4)
+    finally:
+        _remove_rig(rig)

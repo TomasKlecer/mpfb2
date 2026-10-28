@@ -16,7 +16,7 @@ from ...services.mocapsourceservice import MocapSourceService, ROLE_FACE, ROLE_B
 from ...services.mocapanimationservice import MocapAnimationService
 from ...ui.abstractpanel import Abstract_Panel
 from .mocappanel import multiline
-from .mocapproperties import MOCAP_PROPERTIES, speech_from_audio
+from .mocapproperties import MOCAP_PROPERTIES, speech_from_audio, head_from_body
 from .operators.face_animation_operator import find_basemesh
 from .sourceproperties import FACE_SOURCE, AUDIO_SOURCE, BODY_SOURCES, BODY_INDEX, absolute, main_body_index
 
@@ -129,6 +129,7 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
             box.label(text="Live Link Face already uses the actor's left/right.", icon="INFO")
 
         basemesh = find_basemesh(context)
+        self._head_rotation(box, scene, face, basemesh)
         if basemesh is None:
             box.label(text="Select an MPFB2 character.", icon="INFO")
         elif face is None:
@@ -138,6 +139,30 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
         row = box.row()
         row.scale_y = 1.5
         row.operator("mpfb.mocap_create_face_animation", icon="SHAPEKEY_DATA")
+
+    def _head_rotation(self, box, scene, face, basemesh):
+        """Head rotation part of the face animation: on/off, neck share and leaving it to the body video."""
+        row = box.row(align=True)
+        MOCAP_PROPERTIES.draw_properties(scene, row, ["face_head_rotation"])
+        enabled = bool(MOCAP_PROPERTIES.get_value("face_head_rotation", True, entity_reference=scene))
+        neck = row.row(align=True)
+        neck.enabled = enabled and not head_from_body(scene)
+        MOCAP_PROPERTIES.draw_properties(scene, neck, ["face_neck_share"], slider=True)
+        if not enabled:
+            return
+        if main_body_index(scene) >= 0:
+            MOCAP_PROPERTIES.draw_properties(scene, box, ["face_head_from_body"])
+            if head_from_body(scene):
+                box.label(text="The head turns with the body animation (helmet camera).", icon="INFO")
+                return
+        if face is not None and face.get("exists") and not face.get("error") and not face.get("head_rotation"):
+            box.label(text="The face source has no head rotation.", icon="INFO")
+        elif basemesh is not None:
+            rig = MocapAnimationService.find_rig(basemesh)
+            if rig is None:
+                box.label(text="The character has no rig, the head will not turn.", icon="INFO")
+            elif not MocapAnimationService.head_bones(rig):
+                box.label(text="No head bone found in %s." % rig.name, icon="INFO")
 
     def _lipsync(self, layout, scene, context, audio):
         """Settings of the lipsync and the button to create it."""
@@ -163,10 +188,18 @@ class MPFB_PT_Mocap_Animation_Panel(Abstract_Panel):
         MOCAP_PROPERTIES.draw_properties(context.scene, box, ["face_include_children", "face_extend_scene"])
         basemesh = find_basemesh(context)
         tracks = MocapAnimationService.layer_tracks(basemesh) if basemesh is not None else []
-        if not tracks:
-            box.label(text="Face and lipsync are kept as separate layers (NLA tracks).")
+        rig_tracks = MocapAnimationService.rig_layer_tracks(basemesh) if basemesh is not None else []
+        if not tracks and not rig_tracks:
+            box.label(text="Face, head and lipsync are kept as separate layers (NLA tracks).")
             return
         column = box.column(align=True)
+        for track in rig_tracks:
+            for strip in track.strips:
+                column.label(text="%s: %s (%d - %d)%s" % (track.name, strip.action.name if strip.action else "-",
+                                                         strip.frame_start, strip.frame_end, ", muted" if track.mute else ""),
+                             icon="BONE_DATA")
+        if not tracks:
+            return
         for track in tracks:
             for strip in track.strips:
                 column.label(text="%s: %s (%d - %d)%s" % (track.name, strip.action.name if strip.action else "-",

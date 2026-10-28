@@ -49,6 +49,8 @@ ROLE_FILTERS = {ROLE_FACE: "*_landmarks.npz;*.csv", ROLE_BODY: "*_landmarks.npz"
 _TIMECODE = re.compile(r"^(\d+):(\d+):(\d+)[:;](\d+)(?:\.(\d+))?$")
 _TIMECODE_RATES = (24, 25, 30, 48, 50, 60)
 _DEFAULT_LIVELINK_FPS = 60
+# Head rotation columns of Live Link Face
+_LIVELINK_HEAD = ("headyaw", "headpitch", "headroll")
 
 # Below this share of frames with a detection, a source is flagged as weak
 _LOW_DETECTION = 0.5
@@ -115,43 +117,60 @@ class MocapSourceService():
     # ------------ Live Link Face --------------
 
     @staticmethod
-    def read_livelink_csv(path: str) -> tuple[np.ndarray, list[str], np.ndarray]:
-        """Times in seconds from the first frame, ARKit names used by MPFB2 and their values per frame.
-        Columns, which are not ARKit face units (BlendShapeCount, head and eye rotation), are skipped."""
+    def _read_livelink_table(path: str) -> tuple[list[str], list[list[str]], np.ndarray]:
+        """Header, the rows and their times in seconds from the first frame. Rows with repeated or out of order
+        timecodes are dropped."""
         with open(path, "r", encoding="utf-8-sig", newline="") as csv_file:
             rows = list(csv.reader(csv_file))
         header = [column.strip() for column in rows[0]] if rows else []
-        known = {name.lower(): name for name in ARKIT_FACEUNITS}
-        columns = [(index, known[column.lower()]) for index, column in enumerate(header) if column.lower() in known]
-        if not header or header[0].lower() != "timecode" or not columns:
+        if not header or header[0].lower() != "timecode":
             raise ValueError("Not a Live Link Face csv")
-
-        timecodes = []
-        values = []
-        for row in rows[1:]:
-            if len(row) < len(header):
-                continue
-            timecodes.append(_TIMECODE.match(row[0].strip()))
-            values.append([MocapSourceService._number(row[index]) for index, _name in columns])
-        if not values:
+        rows = [row for row in rows[1:] if len(row) >= len(header)]
+        if not rows:
             raise ValueError("The csv has no frames")
 
+        timecodes = [_TIMECODE.match(row[0].strip()) for row in rows]
         if all(timecodes):
-            parts = [match.groups() for match in timecodes]
+            parts = [match.groups() for match in timecodes]  # pyright: ignore[reportOptionalMemberAccess]
             highest = max(int(part[3]) for part in parts)
             rate = next((rate for rate in _TIMECODE_RATES if rate > highest), _DEFAULT_LIVELINK_FPS)
             times = np.array([int(h) * 3600 + int(m) * 60 + int(sec) + (int(frame) + (int(fraction) / 10 ** len(fraction) if fraction else 0.0)) / rate
                               for h, m, sec, frame, fraction in parts])
         else:
-            times = np.arange(len(values)) / _DEFAULT_LIVELINK_FPS
+            times = np.arange(len(rows)) / _DEFAULT_LIVELINK_FPS
         times = times - times[0]
 
-        # Repeated or out of order timecodes are dropped
         keep = [0]
         for index in range(1, len(times)):
             if times[index] > times[keep[-1]]:
                 keep.append(index)
-        return times[keep], [name for _index, name in columns], np.asarray(values, dtype=np.float64)[keep]
+        return header, [rows[index] for index in keep], times[keep]
+
+    @staticmethod
+    def read_livelink_csv(path: str) -> tuple[np.ndarray, list[str], np.ndarray]:
+        """Times from the first frame (seconds), ARKit names used by MPFB2 and their values per frame.
+        Columns, which are not ARKit face units (BlendShapeCount, head and eye rotation) are skipped."""
+        header, rows, times = MocapSourceService._read_livelink_table(path)
+        known = {name.lower(): name for name in ARKIT_FACEUNITS}
+        columns = [(index, known[column.lower()]) for index, column in enumerate(header) if column.lower() in known]
+        if not columns:
+            raise ValueError("Not a Live Link Face csv")
+        values = [[MocapSourceService._number(row[index]) for index, _name in columns] for row in rows]
+        return times, [name for _index, name in columns], np.asarray(values, dtype=np.float64)
+
+    @staticmethod
+    def read_livelink_head(path: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """Times and the head rotation per frame (yaw, pitch, roll in radians), relative to the camera.
+        None, when the csv has no head rotation."""
+        header, rows, times = MocapSourceService._read_livelink_table(path)
+        lower = [column.lower() for column in header]
+        if not all(name in lower for name in _LIVELINK_HEAD):
+            return None
+        columns = [lower.index(name) for name in _LIVELINK_HEAD]
+        angles = np.asarray([[MocapSourceService._number(row[index]) for index in columns] for row in rows], dtype=np.float64)
+        if not np.nan_to_num(angles).any():
+            return None
+        return times, angles
 
     @staticmethod
     def _number(text: str) -> float:
@@ -228,6 +247,8 @@ class MocapSourceService():
         if enabled("face"):
             detection["face"] = float(np.mean(~np.isnan(data["blendshapes"][:, 0]))) if frames else 0.0
         info["detection"] = detection
+        # The head rotation comes from the facial transformation matrix of the face model
+        info["head_rotation"] = "face_matrix" in data.files and bool(detection.get("face"))
 
     @staticmethod
     def _read_livelink(info: dict, path: str) -> None:
@@ -245,6 +266,7 @@ class MocapSourceService():
         # LLF writes zeros while it does not track the face
         info["detection"] = {"face": float(np.mean(np.nan_to_num(values).any(axis=1)))}
         info["start"] = 0.0
+        info["head_rotation"] = MocapSourceService.read_livelink_head(path) is not None
 
     @staticmethod
     def _read_audio(info: dict, data: Any) -> None:

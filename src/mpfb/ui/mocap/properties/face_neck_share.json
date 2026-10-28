@@ -1,0 +1,9 @@
+{
+    "type": "float",
+    "name": "face_neck_share",
+    "label": "Neck",
+    "default": 0.4,
+    "min": 0.0,
+    "max": 1.0,
+    "description": "Share of the head rotation done by the neck bones, the head bone does the rest"
+}

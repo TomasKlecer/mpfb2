@@ -26,7 +26,7 @@ def find_basemesh(context):
 
 
 class MPFB_OT_Mocap_Create_Face_Animation_Operator(MpfbOperator):
-    """Create ARKit face animation of selected character from given face sourcee"""
+    """Create ARKit face animation and head rotation of selected character from given face sourcee"""
     bl_idname = "mpfb.mocap_create_face_animation"
     bl_label = "Create face animation"
     bl_options = {'REGISTER', 'UNDO'}
@@ -64,7 +64,13 @@ class MPFB_OT_Mocap_Create_Face_Animation_Operator(MpfbOperator):
                                                         result["frame_end"])
         if result["children"]:
             message += ", %d fitted meshes follow" % result["children"]
-        self.report({'INFO'}, message)
+        if result["head"]:
+            message += ", head on %s" % ", ".join(result["head"]["bones"])
+            if result["head"]["pushed_down"]:
+                message += " (the action of the rig was moved to NLA track %s)" % result["head"]["pushed_down"]
+        if result["head_skipped"]:
+            message += ", no head rotation: " + result["head_skipped"]
+        self.report({'WARNING'} if result["head_skipped"] else {'INFO'}, message)
         return {'FINISHED'}
 
 
